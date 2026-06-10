@@ -7,7 +7,7 @@ A multi-source data architecture project for film knowledge graphs, temporal pop
 
 Cinema Atlas is a data architecture project that explores film as a connected system of movies, people, genres, production companies, audience ratings, and temporal popularity signals. Instead of treating movies as isolated records, the project models cinema as an analytical platform where users can study relationships, trends, and cultural patterns across film data.
 
-The project focuses on designing and implementing an end-to-end data pipeline that moves raw movie-related data into structured analytical tables. The system is intended to support both relationship-based analysis and time-based film analytics.
+The project focuses on designing and implementing an end-to-end data pipeline that moves raw movie-related data into structured analytical tables. The system is intended to support both relationship-based analysis and time-based film analytics (tbd).
 
 ## Project Goal
 
@@ -15,19 +15,17 @@ The goal of Cinema Atlas is to build a scalable data architecture that can suppo
 
 Example analytical questions include:
 
-* How are movies connected through actors, directors, genres, production companies, and themes?
-* How does movie popularity change over time?
-* Which movies, people, or genres show strong audience engagement?
-* Can relationship paths explain why two films are similar or connected?
-
+* What are the strongest paths linking two films — shared crew, genre, country, or cultural movement?
+* Which directors, themes, or eras act as hubs that bridge otherwise distant clusters of film?
+* Can relationship paths explain a recommendation, not just rank it by rating similarity?
+* 
 This project emphasizes data modeling, ETL design, schema design, and cloud-based data processing.
 
 ## Data Sources
 
-The project may use multiple public or API-based movie data sources, including:
+The project uses multiple public or API-based movie data sources, including:
 
-* TMDB API for movie metadata, popularity, ratings, genres, and production information
-* MovieLens for user rating data
+* TMDB API and IMDB API for movie metadata, popularity, ratings, genres, and production information
 * Wikipedia or Wikidata for additional movie, person, and relationship data
 * Other public datasets for box office, reviews, or temporal popularity signals if needed
 
@@ -48,8 +46,8 @@ Planned tools include:
 * GitHub for code and documentation
 * AWS S3 for cloud storage
 * Databricks for data processing and table creation
-* Delta tables or structured tables for cleaned analytical data
-* Airflow for pipeline orchestration
+* Delta tables or structured tables for cleaned analytical data (tbd)
+* Airflow for pipeline orchestration (tbd)
 
 ## Current Status
 
@@ -57,7 +55,7 @@ This project is currently under development as part of a data architecture group
 
 ## Repository Structure
 
-The repository may include:
+The repository includes:
 
 ```text
 docs/
@@ -78,4 +76,4 @@ src/
 
 ## Team
 
-Team members will be added here.
+Aatish Lobo, Kaio Farkouh, Tianyi Luo
