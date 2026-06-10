@@ -1,0 +1,165 @@
+# Silver Layer Documentation — Cinema Atlas
+
+## 1. Purpose
+
+This document describes the first version of the Cinema Atlas **silver layer**.
+
+The silver layer takes the raw TMDB JSON stored in the bronze S3 layer and turns it into clean, typed, deduplicated Delta tables. Nested JSON structures (genres, cast, crew, releases, reviews, etc.) are flattened and normalized into dimensions, bridges, and fact tables so the data can be queried and, later, used to build the gold analytics layer.
+
+The silver layer is built from the scoped historical TMDB pull only (movies released 2000–2026 with `vote_count >= 200`). Other sources (IMDb, Wikipedia, Wikidata, MovieLens) may be conformed into silver later; the design leaves room for them but does not include them yet.
+
+---
+
+## 2. Environment and access method
+
+The project runs on **Databricks Free Edition**, which has two constraints that shaped the design:
+
+* Free Edition does not support Unity Catalog **external locations / storage credentials** to a user-owned S3 bucket, so the "IAM role → storage credential → external location" pattern is not available.
+* Serverless compute blocks direct Spark access to `s3://` paths (no Hadoop config / instance profile).
+
+Because of this, S3 is accessed the same way the bronze ingestion already worked — with **boto3 and AWS access keys** — but the keys are stored securely instead of hardcoded:
+
+* A dedicated **read-only IAM user** (`databricks-s3-reader`) was created in AWS with a policy granting `s3:GetObject` / `s3:ListBucket` / `s3:GetBucketLocation` on the `de-cinema-atlas-data` bucket only.
+* Its access key is stored in a **Databricks secret scope** (`cinema_atlas`), keys `aws_access_key_id` and `aws_secret_access_key`. No credentials appear in the notebook, so it is safe to commit to GitHub.
+
+---
+
+## 3. Pipeline flow
+
+```text
+S3 bronze (raw JSON, one file per id)
+  → boto3 (keys read from secret scope) downloads files in parallel
+  → written as one .jsonl per endpoint into a Databricks managed Volume
+        /Volumes/milkmoo/bronze/tmdb_raw/{endpoint}.jsonl
+  → Spark reads the Volume (serverless can read managed Volumes)
+  → flatten / explode / cast / deduplicate
+  → managed Delta tables in milkmoo.silver
+```
+
+Serverless Spark cannot read the external S3 bucket directly, but it **can** read a managed Volume, so the Volume acts as the bridge between boto3 and Spark.
+
+The silver tables are **managed Delta tables** in the existing `milkmoo` catalog (`milkmoo.silver` schema). On Free Edition they live in Databricks-managed storage rather than under an `s3://…/silver/` prefix; this is the supported setup for this edition.
+
+---
+
+## 4. Source endpoints loaded
+
+| Endpoint | Files loaded |
+| --- | --- |
+| movies | 10,499 |
+| people | 75,087 |
+| credits | 10,499 |
+| releases | 10,495 |
+| reviews | 10,494 |
+
+The `images` endpoint (~10,496 files) was intentionally deferred for v1.
+
+---
+
+## 5. Silver tables
+
+Plain `silver.*` names are used; the **dimensional role** (dimension / fact / bridge) is documented per table. The `dim_*` / `fact_*` physical tables belong to the gold layer.
+
+### Dimensions
+
+| Table | Grain | Primary key |
+| --- | --- | --- |
+| `silver.movies` | one film (also carries measures: budget, revenue, popularity, vote_average, vote_count) | `film_id` |
+| `silver.people` | one person | `person_id` |
+| `silver.genres` | one genre | `genre_id` |
+| `silver.production_companies` | one company | `company_id` |
+| `silver.countries` | one country | `country_iso` |
+| `silver.languages` | one language | `language_iso` |
+
+### Bridges (many-to-many)
+
+| Table | Connects |
+| --- | --- |
+| `silver.film_genres` | film ↔ genre |
+| `silver.film_production_companies` | film ↔ company |
+| `silver.film_production_countries` | film ↔ country |
+| `silver.film_spoken_languages` | film ↔ language |
+| `silver.film_cast` | film ↔ person (with character, billing order) |
+| `silver.film_crew` | film ↔ person (with department, job) |
+
+### Facts (event-like)
+
+| Table | Grain |
+| --- | --- |
+| `silver.film_releases` | one release per film × country × date |
+| `silver.film_reviews` | one review |
+
+### Supporting
+
+| Table | Grain |
+| --- | --- |
+| `silver.person_aliases` | one alias per person (child of people) |
+
+Every table also carries lineage columns: `source_system` (`'tmdb'`), `source_endpoint`, `source_file`, `loaded_at`.
+
+---
+
+## 6. Row counts (current build)
+
+| Table | Rows |
+| --- | --- |
+| movies | 10,499 |
+| people | 75,087 |
+| genres | 19 |
+| production_companies | 11,386 |
+| countries | 247 |
+| languages | 116 |
+| film_genres | 27,068 |
+| film_production_companies | 38,713 |
+| film_production_countries | 16,167 |
+| film_spoken_languages | 15,617 |
+| film_cast | 363,329 |
+| film_crew | 782,831 |
+| film_releases | 301,615 |
+| film_reviews | 16,229 |
+| person_aliases | 67,765 |
+
+---
+
+## 7. Validation results
+
+* **Primary-key uniqueness:** 0 duplicates on `movies.film_id`, `people.person_id`, `film_cast.credit_id`, `film_crew.credit_id`, `film_reviews.review_id`.
+* **Date sanity:** `release_date` ranges `2000-01-01` → `2026-05-27`, matching the bronze filter.
+* **People count:** `people` (75,087) matches the loaded file count exactly — dedup neither dropped nor duplicated records.
+* **Genre count:** 19, matching TMDB's official movie genre list.
+
+### Cast/crew orphan rate (expected, not a defect)
+
+* `film_cast`: 184,532 / 363,329 references (50.8%) point to a `person_id` not present in `silver.people`.
+* `film_crew`: 640,419 / 782,831 references (81.8%) likewise.
+
+This is expected. Bronze only ingested full person records for the **top ~10 cast members and a set of key crew jobs** per film, so the long tail of minor cast and most crew are not in `people`. The join key itself is valid (the rate is not 100%). The gold layer should LEFT JOIN cast/crew to people. If richer people coverage is wanted later, re-ingest the missing `person_id`s into bronze `people/`.
+
+---
+
+## 8. Known limitations / future work
+
+* **`images` and future `video/clips`** are deferred. The silver structure (a `film_id` + type-discriminator + lineage pattern) is designed so they can be added as new tables without changing existing ones.
+* **No time series / no user-level ratings.** The TMDB pull is a single snapshot with only aggregate votes, so the domain model's `fact_rating`, popularity-snapshot, and revenue-snapshot tables cannot be populated yet. They require MovieLens (ratings) or repeated TMDB pulls (snapshots).
+* **`revenue = 0`** is common for non-US/indie films and means "unknown," not true zero — to be interpreted in gold, kept raw in silver.
+* **Managed (not external) tables.** If the project moves to a paid/trial Databricks workspace, switching silver to external tables under `s3://…/silver/` is a small change.
+
+---
+
+## 9. Relationship to gold
+
+The silver tables map to the planned gold star schema as follows:
+
+* `dim_film` ← `silver.movies` (descriptive columns) + surrogate key
+* `dim_person` ← `silver.people`
+* `dim_genre`, `dim_company`, `dim_country`, `dim_date` ← reference dimensions
+* `fact_review` ← `silver.film_reviews`
+* `fact_release` ← `silver.film_releases`
+* `fact_film_metrics` ← `silver.movies` measures (once a `snapshot_date` exists from repeated pulls)
+* `bridge_film_cast` / `bridge_film_crew` ← silver bridges
+
+---
+
+## 10. Summary
+
+The silver layer is built and validated: 15 typed, deduplicated, lineage-tagged Delta tables in `milkmoo.silver`, derived from the scoped historical TMDB bronze data. Access works on Free Edition via boto3 with a read-only key stored in a Databricks secret scope, staged through a managed Volume. Primary keys are unique, dates are in range, and the cast/crew orphan rate is consistent with the bronze ingestion scope. The layer is ready to support gold-layer dimension and fact modeling.
