@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+:root {
+  --ink:   #0E0E12;
+  --panel: #16161C;
+  --amber: #E8B14C;
+  --cream: #EDE7DA;
+  --muted: #8A8779;
+}
+
+body {
+  background: var(--ink);
+  color: var(--cream);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+h1, h2, h3 {
+  font-family: Georgia, serif;
+  color: var(--cream);
+}
