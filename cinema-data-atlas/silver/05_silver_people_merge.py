@@ -11,7 +11,7 @@ from pyspark.sql.window import Window
 from pyspark.sql.types import StringType, DoubleType
 import unicodedata, re
 
-TMDB_CATALOG = "milkmoo"
+TMDB_CATALOG = "workspace"
 IMDB_CATALOG = "workspace"
 OUT_CATALOG  = "workspace"
 OUT_SCHEMA   = "silver"

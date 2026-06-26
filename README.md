@@ -30,17 +30,20 @@ AWS S3  ── raw JSON / JSONL, source of truth
 Databricks Volumes  ── staging .jsonl per endpoint per run
   ▼
 BRONZE
-  milkmoo.bronze.tmdb_*          (TMDB — teammate's catalog)
+  workspace.bronze.tmdb_*        (TMDB)
   workspace.bronze.imdb_*        (IMDb)
   workspace.bronze.wikidata_*    (Wikidata)
   ▼  (dedup + validate)
   *_validated / *_quarantine
   ▼  (transform + cross-source merge)
 SILVER
-  milkmoo.silver.*               (TMDB normalized star schema)
+  workspace.silver.*             (TMDB normalized star schema)
   workspace.silver.films         (TMDB ⨝ IMDb on imdb_id == tconst)
   workspace.silver.people_resolved  (entity resolution, 2-pass)
   workspace.silver.matched_tconsts
+  workspace.silver.imdb_*        (IMDb Silver tables)
+  workspace.silver.wikidata_*    (Wikidata Silver tables)
+  workspace.silver.unified_silver (flat table — all sources merged)
   ▼  (embeddings + kNN)
 GOLD
   workspace.gold.film_embeddings (UMAP 2D layout + positional color)
@@ -49,7 +52,7 @@ GOLD
 Next.js web app (cinema_atlas_next)
 ```
 
-**Two catalogs:** TMDB lives in `milkmoo` (teammate's catalog); IMDb, Wikidata, and all merged Silver/Gold tables live in `workspace`. The Silver merge layer bridges them on the IMDb identifier (`tmdb.imdb_id == imdb.tconst`).
+**Single catalog:** All Bronze, Silver, and Gold tables live in `workspace` under their respective schemas. The Silver merge layer bridges TMDB and IMDb on the IMDb identifier (`tmdb.imdb_id == imdb.tconst`).
 
 **Stack:** AWS S3 · Databricks (Unity Catalog, Delta Lake, Volumes, serverless Spark, Workflows) · TMDB API · IMDb datasets · Wikidata SPARQL · sentence-transformers · UMAP · rapidfuzz · Next.js · Cytoscape.js · Recharts
 
@@ -59,16 +62,17 @@ Next.js web app (cinema_atlas_next)
 
 Lineage is traced directly from the pipeline code. Each source lands in Bronze, is validated, then flows into Silver; the merge layer joins sources on the IMDb identifier, and Gold derives the thematic map from the merged film table.
 
-### TMDB → Silver star schema (`milkmoo`)
-Each TMDB endpoint follows the same `raw → validated → silver` path. The `movies` endpoint fans out into the largest set of dimension/bridge tables; `audience_trends` is built from the full `tmdb_movies_raw` history (not the deduped validated table) to preserve every metric snapshot.
-![TMDB lineage](docs/images/lineage_tmdb.png)
+### TMDB Bronze ER Diagram
+![TMDB Bronze ER](docs/images/tmdb_bronze.png)
 
-### Cross-source merge → `workspace.silver`
-`films` is the inner join of TMDB (latest snapshot per film) and IMDb basics on `imdb_id == tconst`. `people_resolved` resolves TMDB people to IMDb crew in two passes, scoped to the matched films.
-![Merge lineage](docs/images/lineage_merge.png)
+### IMDb Bronze ER Diagram
+![IMDb Bronze ER](docs/images/imdb_bronze.png)
 
-### Gold → thematic map (`workspace.gold`)
-![Gold lineage](docs/images/lineage_gold.png)
+### Wikidata Bronze ER Diagram
+![Wikidata Bronze ER](docs/images/wikidata_bronze.png)
+
+### Unified Silver ER Diagram (all sources)
+![Unified Silver ER](docs/images/unified_silver.png)
 
 ---
 
@@ -95,10 +99,13 @@ Each TMDB endpoint follows the same `raw → validated → silver` path. The `mo
 ---
 
 ## Pipelines
+### Pipeline DAG
+![Cinema Atlas Pipeline](docs/images/cinema_atlas_pipeline.png)
+All pipelines run as a single Databricks Workflow (`cinema-atlas-pipeline`) with TMDB and Wikidata Bronze branches running in parallel, merging into the Silver layer once both complete.
 
-### TMDB (catalog: `milkmoo`)
 
-Three notebooks, run sequentially as a Workflow:
+
+### TMDB (catalog: `workspace`)
 
 ```
 02_bronze_incremental  →  03_data_quality  →  04_silver_incremental
@@ -111,7 +118,7 @@ Three notebooks, run sequentially as a Workflow:
 ### IMDb (catalog: `workspace`)
 
 ```
-01_bronze_ingest_historical_imdb  →  02_bronze_incremental_imdb  →  03_data_quality_imdb
+01_bronze_ingest_historical  →  02_bronze_incremental  →  03_data_quality
 ```
 
 - **`01` (one-time)** — downloads all five TSV.gz files, filters to movies ≥ 2000, writes per-film JSON (basics) and batched JSONL (others) to S3; builds the `tconst` allowlist.
@@ -120,16 +127,29 @@ Three notebooks, run sequentially as a Workflow:
 
 ### Wikidata (catalog: `workspace`)
 
-- **`01_bronze_ingest_historical_wikidata`** — S3 version: paginates each SPARQL property query (LIMIT/OFFSET, 10k batches) and writes JSONL to S3.
-- **`03_bronze_ingest_wikidata_uc`** — Unity Catalog version: same queries via a shared `ingest_property()` helper, writing straight to a Volume then to `workspace.bronze.wikidata_*` Delta tables. This is the current/preferred version.
+```
+02_bronze_incremental  →  03_data_quality
+```
 
-### Cross-source Silver merge (catalog: `workspace`)
+- **`02_bronze_incremental`** — weekly incremental refresh using watermark-based MERGE for large tables (`imdb_ids`, `based_on`) and full overwrite for sparse tables (`movements`, `festivals`, `influenced_by`). Paginates SPARQL queries at 10k rows with automatic retry on timeout.
+- **`03_data_quality`** — dedupes on composite keys (`wikidata_id` + property ID), validates nulls and IMDb ID format, writes `wikidata_*_validated` / `wikidata_*_quarantine`. Resolves duplicate inflation caused by Wikidata's multiple `P577` publication date entries.
 
-- **`04_silver_films_merge`** — dedupes TMDB to latest snapshot per film, inner-joins to IMDb `basics_validated` on `imdb_id == tconst`, writes `workspace.silver.films` (TMDB-canonical fields + IMDb fields for lineage) and `workspace.silver.matched_tconsts`. Sanity checks enforce unique `tconst` and `id`.
+Historical load was performed once using `01_bronze_ingest_historical` (Unity Catalog version), producing 5 Bronze Delta tables with 137,142 IMDb ID mappings, 7,364 festival links, 12,282 based-on relationships, 16 movement tags, and 162 influence links.
+
+### Silver (catalog: `workspace`)
+
+```
+04_silver_films_merge  →  05_silver_people_merge  →  06_silver_wikidata  →  07_silver_imdb  →  08_unified_silver
+```
+
+- **`04_silver_films_merge`** — dedupes TMDB to latest snapshot per film, inner-joins to IMDb `basics_validated` on `imdb_id == tconst`, writes `workspace.silver.films` (10,221 matched films) and `workspace.silver.matched_tconsts`. Sanity checks enforce unique `tconst` and `id`.
 - **`05_silver_people_merge`** — two-pass entity resolution:
-  - **Pass 1 — direct:** TMDB `people.imdb_id → nconst` (confidence 1.0)
-  - **Pass 2 — film-anchored fuzzy:** for unresolved people, build candidate pairs sharing a matched film, score names with rapidfuzz `token_sort_ratio` (threshold ≥ 90 after accent/punct normalization), keep best match per person
-  - Combines both, guards against many-to-one collisions (Pass 1 wins), then labels everyone `both` / `tmdb_only` / `imdb_only` → `workspace.silver.people_resolved`
+  - **Pass 1 — direct:** TMDB `people.imdb_id → nconst` (confidence 1.0, 65,541 matches)
+  - **Pass 2 — film-anchored fuzzy:** rapidfuzz `token_sort_ratio` ≥ 90 for unresolved people sharing a matched film (1,800 additional matches)
+  - Writes `workspace.silver.people_resolved` with `method` and `confidence` columns
+- **`06_silver_wikidata`** — joins 5 Wikidata validated tables to `matched_tconsts` on `imdb_id = tconst`, resolving to `film_id`. Produces dimension tables (`wikidata_movements`, `wikidata_festivals`) and bridge tables (`wikidata_film_movements`, `wikidata_film_festivals`, `wikidata_film_based_on`, `wikidata_film_influences`).
+- **`07_silver_imdb`** — produces 4 Silver tables scoped to matched films: `imdb_film_ratings` (latest rating per film), `imdb_film_crew` (below-the-line crew), `imdb_people` (person details), `imdb_film_akas` (386,873 alternate titles by region/language).
+- **`08_unified_silver`** — flat table combining all three sources into one row per film. Fields include TMDB canonical metadata, IMDb ratings and genres, Wikidata relationship arrays (`festivals`, `movements`, `based_on`, `influences`), and all three source IDs (`film_id`, `tconst`, `wikidata_id`).
 
 ### Gold (catalog: `workspace`)
 
@@ -145,22 +165,34 @@ Three notebooks, run sequentially as a Workflow:
 
 | Catalog | Table | Type | Key |
 |---|---|---|---|
-| milkmoo | `tmdb_*_raw` | append-only | id + load_ts |
-| milkmoo | `tmdb_*_validated` / `_quarantine` | overwrite / append | latest per id |
+| workspace | `tmdb_*_raw` | append-only | id + load_ts |
+| workspace | `tmdb_*_validated` / `_quarantine` | overwrite / append | latest per id |
 | workspace | `imdb_basics` | MERGE | tconst |
 | workspace | `imdb_ratings` | append snapshots | tconst + snapshot_date |
 | workspace | `imdb_{akas,principals,names}` | append-only | composite |
 | workspace | `imdb_*_validated` / `_quarantine` | overwrite | latest per key |
-| workspace | `wikidata_{imdb_ids,movements,festivals,based_on,influenced_by}` | overwrite | wikidata_id + imdb_id |
+| workspace | `wikidata_{imdb_ids,movements,festivals,based_on,influenced_by}` | MERGE / overwrite | wikidata_id + imdb_id |
+| workspace | `wikidata_*_validated` / `_quarantine` | overwrite | latest per composite key |
 
 ### Silver
 
 | Catalog | Table | Grain | Notes |
 |---|---|---|---|
-| milkmoo | `movies`, `people`, `film_cast`, `film_crew`, `genres`, `film_genres`, … (16 tables) | per entity | TMDB star schema; `audience_trends` is SCD2 |
-| workspace | `films` | film | TMDB ⨝ IMDb merged spine |
+| workspace | `movies`, `people`, `film_cast`, `film_crew`, `genres`, `film_genres`, … (16 tables) | per entity | TMDB star schema; `audience_trends` is SCD2 |
+| workspace | `films` | film | TMDB ⨝ IMDb merged spine (10,221 films) |
 | workspace | `matched_tconsts` | tconst | join bridge (tconst ↔ film_id) |
 | workspace | `people_resolved` | person | 2-pass resolution; method + confidence |
+| workspace | `imdb_film_ratings` | film | latest IMDb rating + vote count |
+| workspace | `imdb_film_crew` | film + person | below-the-line crew (44,197 rows) |
+| workspace | `imdb_people` | person | crew people scoped to matched films |
+| workspace | `imdb_film_akas` | film + region | alternate titles (386,873 rows) |
+| workspace | `wikidata_movements` | movement | dimension (9 unique movements) |
+| workspace | `wikidata_film_movements` | film + movement | bridge table |
+| workspace | `wikidata_festivals` | festival | dimension (465 unique festivals) |
+| workspace | `wikidata_film_festivals` | film + festival | bridge table (380 rows) |
+| workspace | `wikidata_film_based_on` | film + source | source material links (2,135 rows) |
+| workspace | `wikidata_film_influences` | film + influence | influence links (26 rows) |
+| workspace | `unified_silver` | film | flat table — all sources in one row (10,221 films) |
 
 ### Gold
 
@@ -168,6 +200,20 @@ Three notebooks, run sequentially as a Workflow:
 |---|---|---|
 | workspace | `film_embeddings` | film (2D coords + color) |
 | workspace | `thematic_edges` | film pair (kNN similarity) |
+
+---
+
+## unified_silver Coverage
+
+| Metric | Count | Coverage |
+|---|---|---|
+| Total films | 10,221 | — |
+| With Wikidata ID | 8,892 | 87% |
+| With IMDb rating | 10,017 | 98% |
+| With festival data | 153 | 1.5% |
+| With based_on data | 2,135 | 21% |
+| With movement data | 1 | <1% |
+| With influence data | 12 | <1% |
 
 ---
 
@@ -186,6 +232,7 @@ The merge layer reconciles TMDB and IMDb, which use different identifiers:
 
 - **Films:** exact join on `tmdb.imdb_id == imdb.tconst`. Inner join → only films present in both sources reach `silver.films`.
 - **People:** TMDB `person_id` and IMDb `nconst` rarely share a direct key, so resolution is two-pass — direct `imdb_id` match first, then film-anchored fuzzy name matching (rapidfuzz ≥ 90) for the remainder. Output records the `method` and `confidence` so downstream consumers can filter on match quality.
+- **Wikidata:** resolved via `wikidata_imdb_ids_validated.imdb_id = matched_tconsts.tconst`, mapping `wikidata_id` to `film_id`.
 
 ---
 
@@ -208,27 +255,34 @@ npm run dev
 
 ```
 cinema-atlas/
-├── cinema_atlas_next/         Next.js web application
-│   ├── app/                   pages + api/ routes (server-side Databricks queries)
-│   └── lib/databricks.js      Databricks REST API client
+├── cinema_atlas_next/              Next.js web application
+│   ├── app/                        pages + api/ routes (server-side Databricks queries)
+│   └── lib/databricks.js           Databricks REST API client
 ├── notebooks/
 │   ├── tmdb/
 │   │   ├── 02_bronze_incremental.ipynb
 │   │   ├── 03_data_quality.ipynb
 │   │   └── 04_silver_incremental.ipynb
 │   ├── imdb/
-│   │   ├── 01_bronze_ingest_historical_imdb.py
-│   │   ├── 02_bronze_incremental_imdb.py
-│   │   └── 03_data_quality_imdb.py
+│   │   ├── 01_bronze_ingest_historical_imdb.ipynb
+│   │   ├── 02_bronze_incremental_imdb.ipynb
+│   │   └── 03_data_quality_imdb.ipynb
 │   ├── wikidata/
-│   │   ├── 01_bronze_ingest_historical_wikidata.py
-│   │   └── 03_bronze_ingest_wikidata_uc.py
-│   ├── merge/
-│   │   ├── 04_silver_films_merge.py
-│   │   └── 05_silver_people_merge.py
-│   └── gold/
-│       └── 06_gold_thematic_embeddings.py
+│   │   ├── 01_bronze_ingest_historical_wikidata.ipynb
+│   │   ├── 02_bronze_incremental_wikidata.ipynb
+│   │   └── 03_data_quality_wikidata.ipynb
+│   └── silver/
+│       ├── 04_silver_films_merge.ipynb
+│       ├── 05_silver_people_merge.ipynb
+│       ├── 06_silver_wikidata.ipynb
+│       ├── 07_silver_imdb.ipynb
+│       └── 08_unified_silver.ipynb
 ├── docs/
+│   ├── images/
+│   │   ├── tmdb_bronze.png
+│   │   ├── imdb_bronze.png
+│   │   ├── wikidata_bronze.png
+│   │   └── unified_silver.png
 │   ├── bronze_ingestion.md
 │   ├── incremental_ingestion.md
 │   └── silver_layer.md
@@ -242,11 +296,11 @@ cinema-atlas/
 | Setting | Value |
 |---|---|
 | S3 bucket | `de-cinema-atlas-data` |
-| TMDB catalog | `milkmoo` |
-| IMDb / Wikidata / merged catalog | `workspace` |
+| Catalog | `workspace` |
 | AWS region | `us-east-2` |
 | TMDB refresh window | 540 days (18 months) |
 | IMDb refresh window | 2 years |
+| Wikidata watermark | MAX(load_ts) per table |
 | Fuzzy name-match threshold | rapidfuzz token_sort_ratio ≥ 90 |
 | Embedding model | `all-MiniLM-L6-v2` (384-dim) |
 | kNN neighbors | 12 |
@@ -261,10 +315,34 @@ Credentials live in Databricks secret scopes (`cinema-atlas`: `aws-access-key`, 
 ```sql
 WITH first_seen AS (
   SELECT id, MIN(load_ts) AS first_load
-  FROM milkmoo.bronze.tmdb_movies_raw GROUP BY id
+  FROM workspace.bronze.tmdb_movies_raw GROUP BY id
 )
 SELECT first_load, COUNT(*) AS new_films
 FROM first_seen GROUP BY first_load ORDER BY first_load;
+```
+
+**Wikidata — table health check:**
+```sql
+SELECT 'imdb_ids' AS tbl, COUNT(*) AS rows, MAX(load_ts) AS last_load FROM workspace.bronze.wikidata_imdb_ids
+UNION ALL
+SELECT 'movements', COUNT(*), MAX(load_ts) FROM workspace.bronze.wikidata_movements
+UNION ALL
+SELECT 'festivals', COUNT(*), MAX(load_ts) FROM workspace.bronze.wikidata_festivals
+UNION ALL
+SELECT 'based_on', COUNT(*), MAX(load_ts) FROM workspace.bronze.wikidata_based_on
+UNION ALL
+SELECT 'influenced_by', COUNT(*), MAX(load_ts) FROM workspace.bronze.wikidata_influenced_by;
+```
+
+**Unified Silver — cross-source coverage:**
+```sql
+SELECT
+    COUNT(*) AS total_films,
+    COUNT(wikidata_id) AS with_wikidata,
+    COUNT(imdb_rating) AS with_imdb_rating,
+    SUM(CASE WHEN size(festivals) > 0 THEN 1 ELSE 0 END) AS with_festivals,
+    SUM(CASE WHEN size(based_on) > 0 THEN 1 ELSE 0 END) AS with_based_on
+FROM workspace.silver.unified_silver;
 ```
 
 **Merge coverage — films matched across sources:**
@@ -283,6 +361,3 @@ GROUP BY method ORDER BY 2 DESC;
 ## Team
 
 Aatish Lobo · Kaio Farkouh · Tianyi Luo
-
----
-

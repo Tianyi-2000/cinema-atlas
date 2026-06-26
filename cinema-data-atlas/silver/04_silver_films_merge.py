@@ -3,7 +3,7 @@
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-TMDB_CATALOG = "milkmoo"     # TMDB lives in teammate's catalog
+TMDB_CATALOG = "workspace"     # TMDB lives in teammate's catalog
 IMDB_CATALOG = "workspace"   # IMDb lives in our catalog
 
 # write target
