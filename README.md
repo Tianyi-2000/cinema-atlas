@@ -55,6 +55,23 @@ Next.js web app (cinema_atlas_next)
 
 ---
 
+## Data Lineage
+
+Lineage is traced directly from the pipeline code. Each source lands in Bronze, is validated, then flows into Silver; the merge layer joins sources on the IMDb identifier, and Gold derives the thematic map from the merged film table.
+
+### TMDB → Silver star schema (`milkmoo`)
+Each TMDB endpoint follows the same `raw → validated → silver` path. The `movies` endpoint fans out into the largest set of dimension/bridge tables; `audience_trends` is built from the full `tmdb_movies_raw` history (not the deduped validated table) to preserve every metric snapshot.
+![TMDB lineage](docs/images/lineage_tmdb.png)
+
+### Cross-source merge → `workspace.silver`
+`films` is the inner join of TMDB (latest snapshot per film) and IMDb basics on `imdb_id == tconst`. `people_resolved` resolves TMDB people to IMDb crew in two passes, scoped to the matched films.
+![Merge lineage](docs/images/lineage_merge.png)
+
+### Gold → thematic map (`workspace.gold`)
+![Gold lineage](docs/images/lineage_gold.png)
+
+---
+
 ## Data Sources
 
 ### TMDB (The Movie Database)
