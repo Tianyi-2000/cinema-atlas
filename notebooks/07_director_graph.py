@@ -25,7 +25,7 @@ from collections import Counter
 crew_raw = spark.sql("""
     SELECT
         fc.person_id,
-        fc.name,
+        p.name,
         fc.film_id,
         CASE
             WHEN lower(fc.job) = 'director'                  THEN 'Director'
@@ -36,13 +36,14 @@ crew_raw = spark.sql("""
         m.vote_count,
         m.title
     FROM milkmoo.silver.film_crew fc
-    JOIN milkmoo.silver.movies m ON fc.film_id = m.id
+    JOIN milkmoo.silver.people    p  ON fc.person_id = p.person_id
+    JOIN milkmoo.silver.movies    m  ON fc.film_id   = m.film_id
     WHERE (
         lower(fc.job) = 'director'
         OR lower(fc.job) IN ('director of photography', 'cinematographer')
     )
     AND m.vote_count >= 100
-    AND fc.name IS NOT NULL
+    AND p.name IS NOT NULL
 """).toPandas()
 
 # Alias so the rest of the notebook keeps working
@@ -53,132 +54,77 @@ dops = crew_raw[crew_raw.role=='Cinematographer'].person_id.nunique()
 print(f"Rows: {len(crew_raw):,}  |  Directors: {dirs:,}  |  Cinematographers: {dops:,}")
 
 # COMMAND ----------
-# MAGIC %md ## 2 · Film embeddings
+# MAGIC %md ## 2 · Film 2D positions from gold table
 # MAGIC
-# MAGIC **Option A** (preferred): load from the gold table written by notebook 06.
-# MAGIC **Option B** (fallback): re-compute from TMDB overviews.
+# MAGIC The gold table stores pre-computed UMAP x,y for each film.
+# MAGIC Director positions = mean of their films' positions — no re-embedding needed.
 
 # COMMAND ----------
-# ── Option A ────────────────────────────────────────────────────────────────
-try:
-    emb_raw = spark.sql("""
-        SELECT film_id, embedding
-        FROM workspace.gold.film_embeddings
-    """).toPandas()
+film_xy_df = spark.sql("""
+    SELECT film_id, x, y
+    FROM workspace.gold.film_embeddings
+""").toPandas()
 
-    def _parse(e):
-        if isinstance(e, str):   return np.array(json.loads(e), dtype=np.float32)
-        if hasattr(e, '__iter__'): return np.array(list(e), dtype=np.float32)
-        return None
-
-    emb_raw['vec'] = emb_raw['embedding'].apply(_parse)
-    emb_raw = emb_raw.dropna(subset=['vec'])
-    emb_map = {int(r.film_id): r.vec for r in emb_raw.itertuples()}
-    dim = next(iter(emb_map.values())).shape[0]
-    print(f"Loaded {len(emb_map):,} embeddings from gold table  (dim={dim})")
-
-except Exception as e:
-    print(f"Gold table unavailable ({e}), falling back to re-computing embeddings…")
-
-    # ── Option B ─────────────────────────────────────────────────────────────
-    from sentence_transformers import SentenceTransformer
-
-    films_needed = set(directors_raw.film_id.unique())
-    overviews_df = spark.sql(f"""
-        SELECT id AS film_id, overview
-        FROM milkmoo.silver.movies
-        WHERE id IN ({','.join(map(str, films_needed))})
-          AND overview IS NOT NULL AND length(overview) > 30
-    """).toPandas()
-
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    vecs  = model.encode(overviews_df['overview'].tolist(),
-                         batch_size=256, show_progress_bar=True,
-                         normalize_embeddings=True)
-    emb_map = dict(zip(overviews_df['film_id'].astype(int), vecs))
-    print(f"Computed {len(emb_map):,} embeddings  (dim={vecs.shape[1]})")
+xy_map = {int(r.film_id): (float(r.x), float(r.y)) for r in film_xy_df.itertuples()}
+print(f"Loaded {len(xy_map):,} film positions from gold table")
 
 # COMMAND ----------
-# MAGIC %md ## 3 · Director style vectors
+# MAGIC %md ## 3 · Per-person mean 2D position
 
 # COMMAND ----------
 person_data = {}
-for _, row in directors_raw.iterrows():
+for _, row in crew_raw.iterrows():
     pid = int(row['person_id'])
     fid = int(row['film_id'])
-    if fid not in emb_map:
+    if fid not in xy_map:
         continue
     if pid not in person_data:
         person_data[pid] = {
-            'name':      row['name'],
-            'role':      row['role'],
-            'films':     [],
-            'vec_sum':   np.zeros_like(next(iter(emb_map.values()))),
-            'vec_count': 0,
+            'name':   row['name'],
+            'role':   row['role'],
+            'sum_x':  0.0,
+            'sum_y':  0.0,
+            'count':  0,
+            'films':  [],
         }
-    person_data[pid]['vec_sum']   += emb_map[fid]
-    person_data[pid]['vec_count'] += 1
+    x, y = xy_map[fid]
+    person_data[pid]['sum_x'] += x
+    person_data[pid]['sum_y'] += y
+    person_data[pid]['count'] += 1
     person_data[pid]['films'].append({
         'film_id':      fid,
         'title':        row['title'],
         'vote_average': float(row['vote_average']),
-        'vote_count':   int(row['vote_count']),
     })
 
-# Directors need ≥3 films (more prolific); cinematographers ≥2 (often shoot fewer)
 def min_films(role): return 3 if role == 'Director' else 2
 
 director_list = []
 for pid, d in person_data.items():
-    if d['vec_count'] < min_films(d['role']):
+    if d['count'] < min_films(d['role']):
         continue
-    vec = d['vec_sum'] / d['vec_count']
-    vec = vec / (np.linalg.norm(vec) + 1e-9)
     d['films'].sort(key=lambda f: -f['vote_average'])
     director_list.append({
         'person_id':      pid,
         'name':           d['name'],
         'role':           d['role'],
-        'film_count':     d['vec_count'],
-        'vec':            vec,
-        'top_film_id':    d['films'][0]['film_id']  if d['films'] else None,
-        'top_film_title': d['films'][0]['title']    if d['films'] else '',
+        'film_count':     d['count'],
+        'x':              round(d['sum_x'] / d['count'], 5),
+        'y':              round(d['sum_y'] / d['count'], 5),
+        'top_film_id':    d['films'][0]['film_id'],
+        'top_film_title': d['films'][0]['title'],
     })
 
-dirs = sum(1 for d in director_list if d['role']=='Director')
-dops = sum(1 for d in director_list if d['role']=='Cinematographer')
+dirs = sum(1 for d in director_list if d['role'] == 'Director')
+dops = sum(1 for d in director_list if d['role'] == 'Cinematographer')
 print(f"Directors: {dirs:,}  |  Cinematographers: {dops:,}  |  Total: {len(director_list):,}")
 
 # COMMAND ----------
-# MAGIC %md ## 4 · UMAP → 2D positions
+# MAGIC %md ## 4 · K-means clustering (2D positions, no UMAP needed)
 
 # COMMAND ----------
-import umap.umap_ as umap_lib
+coords = np.array([[d['x'], d['y']] for d in director_list])
 
-vecs_matrix = np.stack([d['vec'] for d in director_list])
-reducer = umap_lib.UMAP(
-    n_components=2,
-    n_neighbors=15,
-    min_dist=0.1,
-    metric='cosine',
-    random_state=42,
-)
-coords = reducer.fit_transform(vecs_matrix)
-
-# Normalise to [0, 1]
-coords -= coords.min(axis=0)
-coords /= coords.max(axis=0)
-
-for i, d in enumerate(director_list):
-    d['x'] = float(coords[i, 0])
-    d['y'] = float(coords[i, 1])
-
-print("UMAP done")
-
-# COMMAND ----------
-# MAGIC %md ## 5 · K-means clustering
-
-# COMMAND ----------
 from sklearn.cluster import KMeans
 
 K = 15
@@ -191,7 +137,7 @@ for i, d in enumerate(director_list):
 print(f"K-means done  (k={K})")
 for c in range(K):
     members = [d['name'] for d in director_list if d['cluster']==c]
-    print(f"  Cluster {c:2d}: {len(members):3d} directors — {', '.join(members[:4])}")
+    print(f"  {c:2d}: {len(members):3d} people — {', '.join(members[:4])}")
 
 # COMMAND ----------
 # MAGIC %md ## 6 · Wikidata P135 labels (film movement)
@@ -265,8 +211,8 @@ dir_cluster = {d['person_id']: d['cluster'] for d in director_list}
 genre_rows = spark.sql("""
     SELECT fc.person_id, mg.genre_name
     FROM milkmoo.silver.film_crew fc
-    JOIN milkmoo.silver.movie_genres mg ON fc.film_id = mg.movie_id
-    WHERE lower(fc.job) = 'director'
+    JOIN milkmoo.silver.movie_genres mg ON fc.film_id = mg.film_id
+    WHERE lower(fc.job) IN ('director', 'director of photography', 'cinematographer')
 """).toPandas()
 
 cluster_genres  = {i: [] for i in range(K)}
