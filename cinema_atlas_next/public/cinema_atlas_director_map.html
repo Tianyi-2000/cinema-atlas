@@ -9,7 +9,7 @@
   #stage{position:relative;width:100vw;height:100vh}
   #cv{display:block}
   #stage.drag{cursor:grab}
-  #stage.hovering{cursor:pointer}
+  #stage.hovering{cursor:crosshair}
   #hud{position:absolute;top:14px;left:14px;display:flex;flex-direction:column;gap:10px;pointer-events:none}
   #map-title{font:700 13px system-ui;color:#e8b14c;letter-spacing:.14em;text-transform:uppercase}
   #stats{font:11px system-ui;color:#46445a}
@@ -20,15 +20,31 @@
     cursor:pointer;color:#8a8779;transition:all .15s;letter-spacing:.04em;
   }
   .role-btn.active{background:#1e1c2a;color:#e8e6df;border-color:#5a5870}
+  /* zoom controls — right side, vertically centred */
+  .controls{
+    position:absolute;top:50%;right:20px;transform:translateY(-50%);
+    pointer-events:auto;display:flex;flex-direction:column;gap:6px;
+  }
+  .controls button{
+    width:32px;height:32px;background:rgba(20,20,24,.85);
+    border:1px solid #2a2a38;color:#e8b14c;border-radius:4px;
+    font-size:16px;cursor:pointer;backdrop-filter:blur(8px);
+    transition:border-color .15s;
+  }
+  .controls button:hover{border-color:#e8b14c}
   #tip{
     position:absolute;display:none;
     background:rgba(10,10,14,.95);border:1px solid #2a2a3a;
     border-radius:7px;padding:9px 13px;
     pointer-events:none;font-size:12px;line-height:1.7;
-    max-width:230px;
+    max-width:240px;
   }
-  #controls{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
-  #movement-panel{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;max-width:400px}
+  #movement-panel{
+    position:absolute;bottom:20px;left:0;right:0;
+    display:flex;gap:5px;padding:0 20px;overflow-x:auto;
+    pointer-events:auto;scrollbar-width:none;
+  }
+  #movement-panel::-webkit-scrollbar{display:none}
   .chip{
     flex-shrink:0;padding:3px 9px;border-radius:20px;
     font-size:10px;border:1px solid;background:transparent;
@@ -57,7 +73,12 @@
       <button class="role-btn active" data-role="Cinematographer">○ Cinematographers</button>
     </div>
   </div>
-  <div id="controls"><div id="movement-panel"></div></div>
+  <div class="controls">
+    <button id="zin">+</button>
+    <button id="zout">−</button>
+    <button id="reset">◉</button>
+  </div>
+  <div id="movement-panel"></div>
   <div id="tip"></div>
   <div id="loading">Loading filmmaker landscape…</div>
 </div>
@@ -89,6 +110,7 @@ function resize(){
 resize(); window.addEventListener('resize', ()=>{ resize(); fit(); draw(); });
 
 const nodes = DATA.nodes;
+const byId  = new Map(nodes.map(n=>[n.person_id, n]));
 
 const PALETTE = [
   '#e8a838','#6b9eba','#d46b8a','#c07848','#6a5a90',
@@ -103,35 +125,44 @@ for(const n of nodes){
   n._rscale = Math.max(1, Math.sqrt(n.film_count || 1));
 }
 
-// Role toggle state — true = visible
-const roleVisible = { Director: true, Cinematographer: true };
+// Precompute k=8 nearest neighbours for each node (2D Euclidean)
+const K_NBR = 8;
+for(const n of nodes){
+  const scored = [];
+  for(const m of nodes){
+    if(m===n) continue;
+    scored.push([m, (n.x-m.x)**2+(n.y-m.y)**2]);
+  }
+  scored.sort((a,b)=>a[1]-b[1]);
+  n._nbrs = scored.slice(0, K_NBR).map(([m])=>m);
+}
 
-document.querySelectorAll('.role-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
+// Role toggle
+const roleVisible = { Director: true, Cinematographer: true };
+document.querySelectorAll('.role-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
     const role = btn.dataset.role;
     roleVisible[role] = !roleVisible[role];
     btn.classList.toggle('active', roleVisible[role]);
-    hover = null; draw();
+    hover=null; draw();
   });
 });
 
-// Movement filter chips
+// Movement chips
 let activeGroup = null;
 const panel = document.getElementById('movement-panel');
-const groupColorMap = new Map(nodes.map(n => [n._group, n._c]));
-[...groupColorMap.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([label, col])=>{
+const groupColorMap = new Map(nodes.map(n=>[n._group, n._c]));
+[...groupColorMap.entries()].sort((a,b)=>a[0].localeCompare(b[0])).forEach(([label,col])=>{
   const c = document.createElement('button');
-  c.className = 'chip';
-  c.textContent = label;
-  c.style.color = col;
-  c.style.borderColor = col + '88';
+  c.className='chip'; c.textContent=label;
+  c.style.color=col; c.style.borderColor=col+'88';
   c.addEventListener('click', ()=>{
     activeGroup = activeGroup===label ? null : label;
     document.querySelectorAll('.chip').forEach(el=>{
       el.classList.toggle('active',  el.textContent===activeGroup);
       el.classList.toggle('faded',   !!activeGroup && el.textContent!==activeGroup);
     });
-    hover = null; draw();
+    hover=null; draw();
   });
   panel.appendChild(c);
 });
@@ -141,10 +172,10 @@ document.getElementById('nc-dir').textContent = nodes.filter(n=>!n._isDOP).lengt
 document.getElementById('nc-dop').textContent = nodes.filter(n=>n._isDOP).length.toLocaleString();
 document.getElementById('mc').textContent = groupColorMap.size.toLocaleString();
 
-// Cluster centroids + spreads (for voronoi + labels)
+// Cluster centroids + spreads
 const regions = {};
 for(const n of nodes){
-  const g = n._group;
+  const g=n._group;
   if(!regions[g]) regions[g]={sumX:0,sumY:0,count:0,spread:0,color:n._c};
   regions[g].sumX+=n.x; regions[g].sumY+=n.y; regions[g].count++;
 }
@@ -155,7 +186,7 @@ for(const n of nodes){
 }
 for(const r of Object.values(regions)) r.spread=Math.sqrt(r.spread/r.count);
 
-// Voronoi territory canvas (computed once)
+// Voronoi territory canvas
 function hex2rgb(h){return[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]}
 const regionEntries = Object.entries(regions);
 const VRES = 200;
@@ -178,10 +209,10 @@ if(regionEntries.length){
       img.data[idx]=rv; img.data[idx+1]=gv; img.data[idx+2]=bv; img.data[idx+3]=255;
     }
   }
-  voronoiCv.getContext('2d').putImageData(img,0,0);
+  vCtx.putImageData(img,0,0);
 }
 
-// View transform
+// View
 let view={x:0,y:0,s:0};
 function fit(){
   const pad=90;
@@ -230,38 +261,62 @@ function drawLabels(){
   ctx.restore();
 }
 
+function isVisible(n){ return roleVisible[n.role??'Director'] && (!activeGroup||n._group===activeGroup); }
+
 function draw(){
   ctx.clearRect(0,0,W,H);
   drawBlobs();
 
   const base = Math.max(2, view.s*0.0032);
 
+  // Hover edges — draw before nodes so they sit underneath
+  if(hover && isVisible(hover)){
+    const hx=sx(hover), hy=sy(hover);
+    ctx.save();
+    ctx.strokeStyle='rgba(216,178,94,0.35)';
+    ctx.lineWidth=0.9;
+    ctx.beginPath();
+    for(const nb of hover._nbrs){
+      if(!isVisible(nb)) continue;
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(sx(nb), sy(nb));
+    }
+    ctx.stroke();
+    // Highlight neighbour nodes
+    for(const nb of hover._nbrs){
+      if(!isVisible(nb)) continue;
+      ctx.fillStyle=nb._c;
+      ctx.globalAlpha=0.85;
+      ctx.beginPath();
+      ctx.arc(sx(nb),sy(nb), base*nb._rscale*1.4, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    ctx.restore();
+  }
+
+  // All nodes
   for(const n of nodes){
-    const roleOk  = roleVisible[n.role ?? 'Director'];
+    if(!roleVisible[n.role??'Director']) continue;
     const groupOk = !activeGroup || n._group===activeGroup;
-    const dimmed  = !roleOk || !groupOk || (hover && hover!==n);
-
-    if(!roleOk) continue;   // fully hidden when role toggled off
-
-    ctx.globalAlpha = dimmed ? 0.10 : 1;
+    const isNbr   = hover && hover._nbrs.includes(n);
+    const dimmed  = !groupOk || (hover && hover!==n && !isNbr);
+    ctx.globalAlpha = dimmed ? 0.08 : 1;
     const r = hover===n ? base*3 : base*n._rscale;
 
     if(n._isDOP){
-      // Cinematographers — hollow ring, slightly thinner radius
-      ctx.strokeStyle = n._c;
-      ctx.lineWidth   = Math.max(1, r * 0.45);
+      ctx.strokeStyle=n._c;
+      ctx.lineWidth=Math.max(1, r*0.45);
       ctx.beginPath(); ctx.arc(sx(n),sy(n), r*0.85, 0, 6.2832); ctx.stroke();
     } else {
-      // Directors — solid filled circle
-      ctx.fillStyle = n._c;
+      ctx.fillStyle=n._c;
       ctx.beginPath(); ctx.arc(sx(n),sy(n), r, 0, 6.2832); ctx.fill();
     }
   }
-
   ctx.globalAlpha=1;
 
-  // Hover ring (white, both types)
-  if(hover && roleVisible[hover.role ?? 'Director']){
+  // Hover ring
+  if(hover && isVisible(hover)){
     ctx.strokeStyle='rgba(232,230,223,.9)'; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.arc(sx(hover),sy(hover),Math.max(5,base*3.2),0,6.2832); ctx.stroke();
   }
@@ -273,39 +328,42 @@ draw();
 // Tooltip
 function showTip(n, px, py){
   const roleLabel = n._isDOP ? '○ Cinematographer' : '● Director';
-  const parts = [
+  const nearNames = n._nbrs
+    .filter(m => isVisible(m))
+    .slice(0,4)
+    .map(m=>`<span style="color:${m._c}">${m.name}</span>`)
+    .join(', ');
+  const parts=[
     `<strong style="color:#e8b14c">${n.name}</strong>`,
     `<span style="color:#5a5870;font-size:11px">${roleLabel}</span>`,
     `${n.film_count} film${n.film_count!==1?'s':''}`,
-    n.top_film_title ? `<span style="color:#6a6880">Top: ${n.top_film_title}</span>` : '',
-    (n.movement||n.cluster_label) ? `<span style="color:${n._c};font-size:11px">${n.movement||n.cluster_label}</span>` : '',
+    nearNames ? `<span style="color:#46445a;font-size:11px">nearest: ${nearNames}</span>` : '',
+    (n.cluster_label)?`<span style="color:${n._c};font-size:11px">${n.cluster_label}</span>`:'',
   ].filter(Boolean).join('<br>');
-  tip.innerHTML = parts;
+  tip.innerHTML=parts;
   tip.style.display='block';
-  tip.style.left = Math.min(px+16, W-244)+'px';
-  tip.style.top  = Math.max(8, py-10)+'px';
+  const tw=230;
+  tip.style.left=Math.min(px+16, W-tw-8)+'px';
+  tip.style.top=Math.max(8, py-10)+'px';
 }
 function hideTip(){ tip.style.display='none'; }
 
-function isVisible(n){ return roleVisible[n.role ?? 'Director'] && (!activeGroup || n._group===activeGroup); }
-
 function hitTest(mx, my){
-  const base  = Math.max(2, view.s*0.0032);
-  const thresh = Math.max(14, base*4);
+  const base=Math.max(2,view.s*0.0032);
+  const thresh=Math.max(14,base*4);
   let best=null, bestD=Infinity;
   for(const n of nodes){
     if(!isVisible(n)) continue;
     const dx=sx(n)-mx, dy=sy(n)-my, d=dx*dx+dy*dy;
-    if(d<thresh*thresh && d<bestD){ bestD=d; best=n; }
+    if(d<thresh*thresh&&d<bestD){bestD=d;best=n;}
   }
   return best;
 }
 
-// Interaction
+// Interaction — click does not navigate
 let drag=false, last=null, moved=false;
 stage.addEventListener('mousedown', e=>{drag=true;moved=false;last=[e.clientX,e.clientY];stage.classList.add('drag')});
 window.addEventListener('mouseup', ()=>{
-  if(!moved && hover && hover.top_film_id) window.parent.location.href='/film/'+hover.top_film_id;
   drag=false; stage.classList.remove('drag');
 });
 window.addEventListener('mousemove', e=>{
@@ -319,13 +377,24 @@ window.addEventListener('mousemove', e=>{
   if(n){ showTip(n,e.clientX,e.clientY); stage.classList.add('hovering'); }
   else  { hideTip(); stage.classList.remove('hovering'); }
 });
+
+// Zoom
 stage.addEventListener('wheel', e=>{
   e.preventDefault();
-  const f=e.deltaY>0?0.85:1/0.85;
+  const f=e.deltaY>0?0.88:1/0.88;
   view.x=e.clientX-(e.clientX-view.x)*f;
   view.y=e.clientY-(e.clientY-view.y)*f;
   view.s*=f; hover=null; hideTip(); draw();
 },{passive:false});
+
+function zoomBtn(f){
+  const mx=W/2, my=H/2;
+  view.x=mx-(mx-view.x)*f; view.y=my-(my-view.y)*f; view.s*=f;
+  hover=null; hideTip(); draw();
+}
+document.getElementById('zin').onclick   = ()=>zoomBtn(1.25);
+document.getElementById('zout').onclick  = ()=>zoomBtn(1/1.25);
+document.getElementById('reset').onclick = ()=>{ fit(); hover=null; hideTip(); draw(); };
 </script>
 </body>
 </html>
