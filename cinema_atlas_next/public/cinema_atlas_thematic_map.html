@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinema Atlas — Thematic Map</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Spline+Sans+Mono:wght@400;500&display=swap');
+  :root{
+    --ink:#1b1a17; --paper:#0d0d10; --mist:#76747f; --line:#26252c;
+    --hi:#e8e6df; --accent:#d8b25e;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:var(--paper);color:var(--hi);
+    font-family:'Spline Sans Mono',monospace;overflow:hidden}
+  #stage{position:fixed;inset:0}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block}
+
+  .frame{position:fixed;inset:0;pointer-events:none;z-index:10}
+  .title{position:absolute;top:26px;left:30px;pointer-events:none}
+  .title h1{font-family:'Fraunces',serif;font-weight:500;font-size:30px;
+    letter-spacing:-.01em;line-height:1;color:var(--hi)}
+  .title .sub{font-size:11px;color:var(--mist);margin-top:8px;
+    letter-spacing:.14em;text-transform:uppercase}
+
+  .legend{position:absolute;bottom:26px;left:30px;font-size:11px;
+    color:var(--mist);line-height:1.9;max-width:240px}
+  .legend b{color:var(--hi);font-weight:500}
+
+  .search{position:absolute;top:28px;right:30px;pointer-events:auto;
+    display:flex;align-items:center;gap:0}
+  .search input{background:rgba(20,20,24,.85);border:1px solid var(--line);
+    color:var(--hi);font-family:'Spline Sans Mono',monospace;font-size:12px;
+    padding:9px 13px;width:230px;outline:none;border-radius:3px;
+    backdrop-filter:blur(8px)}
+  .search input:focus{border-color:var(--accent)}
+  .search input::placeholder{color:var(--mist)}
+
+  .hud{position:absolute;bottom:26px;right:30px;font-size:11px;
+    color:var(--mist);text-align:right;line-height:1.8}
+  .hud b{color:var(--hi);font-weight:500}
+
+  .tip{position:fixed;pointer-events:none;z-index:20;
+    background:rgba(14,14,18,.94);border:1px solid var(--line);
+    border-radius:4px;padding:9px 12px;backdrop-filter:blur(10px);
+    opacity:0;transition:opacity .12s;max-width:260px}
+  .tip .t{font-family:'Fraunces',serif;font-size:15px;color:var(--hi);
+    line-height:1.15;margin-bottom:3px}
+  .tip .m{font-size:10px;color:var(--mist);letter-spacing:.06em}
+  .tip .nbrs{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);
+    font-size:10px;color:var(--mist);line-height:1.7}
+  .tip .nbrs i{color:var(--accent);font-style:normal}
+
+  .controls{position:absolute;top:50%;right:30px;transform:translateY(-50%);
+    pointer-events:auto;display:flex;flex-direction:column;gap:6px}
+  .controls button{width:32px;height:32px;background:rgba(20,20,24,.85);
+    border:1px solid var(--line);color:var(--hi);border-radius:4px;
+    font-size:16px;cursor:pointer;backdrop-filter:blur(8px);
+    transition:border-color .15s}
+  .controls button:hover{border-color:var(--accent)}
+
+  #theme-panel{position:absolute;bottom:58px;left:0;right:0;
+    display:flex;gap:5px;padding:0 30px;overflow-x:auto;pointer-events:auto;
+    scrollbar-width:none}
+  #theme-panel::-webkit-scrollbar{display:none}
+  .chip{flex-shrink:0;padding:3px 9px;border-radius:20px;font-size:10px;
+    cursor:pointer;border:1px solid;letter-spacing:.06em;
+    transition:opacity .15s;opacity:.65;background:transparent}
+  .chip:hover,.chip.active{opacity:1}
+  .chip.faded{opacity:.18}
+  #stage{cursor:default}
+  #stage.drag{cursor:grabbing}
+  #stage.hovering{cursor:pointer}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="cv"></canvas></div>
+<div id="loading" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d0d10;font-family:monospace;color:#76747f;font-size:13px;letter-spacing:.1em;text-transform:uppercase;z-index:100">Loading cinema landscape…</div>
+<div class="frame">
+  <div class="title">
+    <h1>Cinema Atlas</h1>
+    <div class="sub">A thematic map of film</div>
+  </div>
+
+  <div class="search">
+    <input id="q" placeholder="search a film…" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div id="theme-panel"></div>
+
+  <div class="controls">
+    <button id="zin">+</button>
+    <button id="zout">−</button>
+    <button id="reset">◉</button>
+  </div>
+
+  <div class="legend">
+    Each point is a film, placed by what its plot is <b>about</b>.
+    Neighbors share theme; color follows position, so the map blends
+    from one sensibility into the next. Drag to pan, scroll to zoom,
+    hover to read.
+  </div>
+
+  <div class="hud">
+    <div><b id="nc">0</b> films &nbsp; <b id="ec">0</b> links</div>
+    <div id="status">thematic embedding · plot overview</div>
+  </div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script type="module">
+let DATA;
+try {
+  const res = await fetch("/thematic_graph.json");
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  DATA = await res.json();
+  document.getElementById("loading")?.remove();
+} catch(err) {
+  document.getElementById("loading").textContent = "Error: " + err.message;
+  throw err;
+}
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const stage = document.getElementById('stage');
+const tip = document.getElementById('tip');
+let W,H,DPR;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  cv.style.width = W+'px'; cv.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+resize(); window.addEventListener('resize',()=>{resize();draw()});
+
+const nodes = DATA.nodes;
+const edges = DATA.edges;
+const byId = new Map(nodes.map(n=>[n.film_id,n]));
+
+const THEME_COLORS = {
+  "coming of age":          "#e8a838",
+  "isolation & loneliness": "#6b9eba",
+  "love & romance":         "#d46b8a",
+  "family drama":           "#c07848",
+  "crime & heist":          "#6a5a90",
+  "revenge & justice":      "#c05050",
+  "survival":               "#5a8a5a",
+  "war & military":         "#8a7a4a",
+  "psychological thriller":  "#8060a0",
+  "memory & identity":      "#4a90a8",
+  "horror & supernatural":  "#803060",
+  "science fiction":        "#3878c0",
+  "political drama":        "#607050",
+  "sports":                 "#c07840",
+  "biography":              "#887060",
+  "fantasy & adventure":    "#7858c0",
+  "comedy":                 "#c8a040",
+  "grief & loss":           "#5a7888",
+  "friendship & loyalty":   "#5a9068",
+  "social issues":          "#b85838",
+};
+// If JSON has no theme labels (Databricks notebook not yet re-run),
+// assign spatial k-means clusters so Voronoi territories render immediately
+if(!nodes.some(n=>n.theme)){
+  const _names = Object.keys(THEME_COLORS);
+  const _K = _names.length;   // 20 clusters
+  const _step = Math.floor(nodes.length / _K);
+  // Spread initial centroids evenly across the node array
+  let _cents = Array.from({length:_K}, (_,i) => {
+    const n = nodes[Math.min(i*_step, nodes.length-1)];
+    return {x:n.x, y:n.y};
+  });
+  // 40 Lloyd iterations
+  for(let _it=0; _it<40; _it++){
+    const _s = Array.from({length:_K}, ()=>({sx:0,sy:0,c:0}));
+    for(const n of nodes){
+      let _bd=Infinity, _bi=0;
+      for(let i=0;i<_K;i++){
+        const _d=(n.x-_cents[i].x)**2+(n.y-_cents[i].y)**2;
+        if(_d<_bd){_bd=_d;_bi=i;}
+      }
+      n.theme=_names[_bi];
+      _s[_bi].sx+=n.x; _s[_bi].sy+=n.y; _s[_bi].c++;
+    }
+    for(let i=0;i<_K;i++){
+      if(_s[i].c){_cents[i].x=_s[i].sx/_s[i].c; _cents[i].y=_s[i].sy/_s[i].c;}
+    }
+  }
+}
+
+for(const n of nodes) n._c = THEME_COLORS[n.theme] || n.color || '#76747f';
+
+let activeTheme = null;
+
+// Build theme chips (only if theme data is present)
+const themePanel = document.getElementById('theme-panel');
+const uniqueThemes = [...new Set(nodes.map(n=>n.theme).filter(Boolean))].sort();
+uniqueThemes.forEach(t => {
+  const c = document.createElement('button');
+  c.className = 'chip';
+  c.textContent = t;
+  c.style.color = THEME_COLORS[t] || '#aaa';
+  c.style.borderColor = (THEME_COLORS[t] || '#555') + '88';
+  c.addEventListener('click', () => {
+    activeTheme = activeTheme === t ? null : t;
+    document.querySelectorAll('.chip').forEach(el => {
+      el.classList.toggle('active', el.textContent === activeTheme);
+      el.classList.toggle('faded', !!activeTheme && el.textContent !== activeTheme);
+    });
+    hover = null; draw();
+  });
+  themePanel.appendChild(c);
+});
+
+
+// Precompute theme centroids + spreads in data-space (done once)
+const themeRegions = {};
+for(const n of nodes){
+  if(!n.theme) continue;
+  if(!themeRegions[n.theme]) themeRegions[n.theme]={sumX:0,sumY:0,count:0,spread:0};
+  themeRegions[n.theme].sumX += n.x;
+  themeRegions[n.theme].sumY += n.y;
+  themeRegions[n.theme].count++;
+}
+for(const [t,r] of Object.entries(themeRegions)){
+  r.cx = r.sumX / r.count;
+  r.cy = r.sumY / r.count;
+}
+for(const n of nodes){
+  if(!n.theme||!themeRegions[n.theme]) continue;
+  const r=themeRegions[n.theme];
+  r.spread += (n.x-r.cx)**2 + (n.y-r.cy)**2;
+}
+for(const r of Object.values(themeRegions)) r.spread = Math.sqrt(r.spread/r.count);
+
+// Precompute Voronoi territory map in data-space (done once after theme centroids are ready)
+// Each pixel gets the color of its nearest theme centroid → blurred at draw time → distinct territories
+const themeEntries = Object.entries(themeRegions);
+const VRES = 200;
+const voronoiCanvas = document.createElement('canvas');
+voronoiCanvas.width = VRES; voronoiCanvas.height = VRES;
+const vCtx = voronoiCanvas.getContext('2d');
+if(themeEntries.length){
+  const imgData = vCtx.createImageData(VRES, VRES);
+  for(let py=0; py<VRES; py++){
+    for(let px=0; px<VRES; px++){
+      const dx = px/VRES;
+      const dy = 1 - py/VRES;   // row 0 = top of screen = data y=1
+      let bestDist=Infinity, bestIdx=0;
+      for(let i=0; i<themeEntries.length; i++){
+        const r=themeEntries[i][1];
+        const d=(dx-r.cx)**2+(dy-r.cy)**2;
+        if(d<bestDist){bestDist=d;bestIdx=i;}
+      }
+      const col=THEME_COLORS[themeEntries[bestIdx][0]]||'#76747f';
+      const [rv,gv,bv]=hex2rgb(col);
+      const idx=(py*VRES+px)*4;
+      imgData.data[idx]=rv; imgData.data[idx+1]=gv; imgData.data[idx+2]=bv;
+      imgData.data[idx+3]=255;
+    }
+  }
+  vCtx.putImageData(imgData, 0, 0);
+}
+
+document.getElementById('nc').textContent = nodes.length.toLocaleString();
+document.getElementById('ec').textContent = edges.length.toLocaleString();
+
+// build adjacency for hover-highlight + neighbor list
+const adj = new Map();
+for(const e of edges){
+  if(!adj.has(e.src)) adj.set(e.src,[]);
+  if(!adj.has(e.dst)) adj.set(e.dst,[]);
+  adj.get(e.src).push([e.dst,e.sim]);
+  adj.get(e.dst).push([e.src,e.sim]);
+}
+
+// view transform
+let view = {x:0,y:0,s:0};
+function fit(){
+  const pad=80;
+  view.s = Math.min((W-pad*2),(H-pad*2));
+  view.x = (W - view.s)/2;
+  view.y = (H - view.s)/2;
+}
+fit();
+function sx(n){return view.x + n.x*view.s}
+function sy(n){return view.y + (1-n.y)*view.s}
+
+let hover=null;
+
+function hex2rgb(h){return[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]}
+
+function drawThemeBlobs(){
+  if(!themeEntries.length) return;
+  const fade = Math.max(0, Math.min(1, (2200-view.s)/1200));
+  if(fade<=0) return;
+  // Voronoi map: each pixel is colored by its nearest centroid.
+  // Drawing it blurred at the correct screen position creates hard territory
+  // centers that bleed softly at boundaries — clear separation on dark bg.
+  const blurPx = Math.max(32, view.s * 0.04);
+  ctx.save();
+  ctx.filter = `blur(${blurPx}px)`;
+  ctx.globalAlpha = fade * 0.45;
+  // data space [0,1]² → screen rect [view.x, view.y, view.s, view.s]
+  ctx.drawImage(voronoiCanvas, view.x, view.y, view.s, view.s);
+  ctx.filter = 'none';
+  ctx.restore();
+}
+
+function drawThemeLabels(){
+  if(!themeEntries.length) return;
+  const fade = Math.max(0, Math.min(1, (2000-view.s)/1000));
+  if(fade<=0) return;
+  ctx.save();
+  ctx.globalAlpha = fade;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 15px "Helvetica Neue",Arial,sans-serif';
+  const hpad=8, vpad=5, barW=4;
+  for(const [theme,r] of themeEntries){
+    const col = THEME_COLORS[theme]||'#ddd';
+    const scx = view.x + r.cx*view.s;
+    const scy = view.y + (1-r.cy)*view.s;
+    const label = theme.toUpperCase();
+    const tw = ctx.measureText(label).width;
+    const boxW = tw + hpad*2 + barW;
+    const boxH = 22 + vpad*2;
+    const bx = scx - boxW/2;
+    const by = scy - boxH/2;
+    // drop shadow for legibility on any background
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 8;
+    // solid pill
+    ctx.fillStyle = 'rgba(8,8,12,0.88)';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(bx, by, boxW, boxH, 4);
+    else ctx.rect(bx, by, boxW, boxH);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // colored left bar
+    ctx.fillStyle = col;
+    ctx.fillRect(bx, by, barW, boxH);
+    // text
+    ctx.fillStyle = '#f0ede4';
+    ctx.fillText(label, scx + barW/2, scy + 1);
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawThemeBlobs();
+  const ha = hover ? new Set((adj.get(hover.film_id)||[]).map(d=>d[0])) : null;
+  ctx.lineWidth = 0.5;
+  if(hover){
+    // hovering: draw only this film's edges highlighted
+    for(const e of edges){
+      const a=byId.get(e.src), b=byId.get(e.dst);
+      if(!a||!b) continue;
+      if(e.src!==hover.film_id && e.dst!==hover.film_id) continue;
+      ctx.strokeStyle='rgba(216,178,94,.55)';
+      ctx.beginPath(); ctx.moveTo(sx(a),sy(a)); ctx.lineTo(sx(b),sy(b)); ctx.stroke();
+    }
+  } else {
+    // not hovering: all edges in one batched draw call
+    ctx.strokeStyle='rgba(120,116,127,.07)';
+    ctx.beginPath();
+    for(const e of edges){
+      const a=byId.get(e.src), b=byId.get(e.dst);
+      if(!a||!b) continue;
+      ctx.moveTo(sx(a),sy(a)); ctx.lineTo(sx(b),sy(b));
+    }
+    ctx.stroke();
+  }
+  // nodes
+  const r = Math.max(1.4, view.s*0.0028);
+  for(const n of nodes){
+    const themeOk = !activeTheme || n.theme === activeTheme;
+    const hoverDim = hover && hover!==n && !(ha&&ha.has(n.film_id));
+    ctx.globalAlpha = (!themeOk || hoverDim) ? 0.10 : 1;
+    ctx.fillStyle = n._c;
+    ctx.beginPath(); ctx.arc(sx(n),sy(n), hover===n?r*2.4:r, 0, 6.2832); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+  // focal ring
+  if(hover){
+    ctx.strokeStyle='rgba(232,230,223,.9)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(sx(hover),sy(hover), Math.max(4,view.s*0.007),0,6.2832); ctx.stroke();
+  }
+  drawThemeLabels();
+}
+draw();
+
+// ---- interaction ----
+let drag=false, last=null, moved=false;
+stage.addEventListener('mousedown',e=>{drag=true;moved=false;last=[e.clientX,e.clientY];stage.classList.add('drag')});
+window.addEventListener('mouseup', () => {
+  if(!moved && hover) window.parent.location.href = '/film/' + hover.film_id;
+  drag = false; stage.classList.remove('drag');
+});
+window.addEventListener('mousemove',e=>{
+  if(drag){
+    const dx=e.clientX-last[0], dy=e.clientY-last[1];
+    if(Math.abs(dx)+Math.abs(dy)>2) moved=true;
+    view.x+=dx; view.y+=dy; last=[e.clientX,e.clientY]; draw(); hideTip(); return;
+  }
+  // hover hit-test (nearest within radius)
+  const mx=e.clientX, my=e.clientY;
+  let best=null, bd=1e9;
+  for(const n of nodes){
+    const d=(sx(n)-mx)**2+(sy(n)-my)**2;
+    if(d<bd){bd=d;best=n}
+  }
+  const thresh = Math.max(10, view.s*0.012)**2;
+  if(bd<thresh){ if(hover!==best){hover=best;draw()} showTip(best,mx,my); stage.classList.add('hovering'); }
+  else { if(hover){hover=null;draw()} hideTip(); stage.classList.remove('hovering'); }
+});
+
+function showTip(n,x,y){
+  const nb=(adj.get(n.film_id)||[]).slice().sort((a,b)=>b[1]-a[1]).slice(0,4);
+  const list=nb.map(([id,s])=>{const m=byId.get(id);return m?`<i>${(s).toFixed(2)}</i> ${esc(m.title)}`:''}).join('<br>');
+  const themeClr = THEME_COLORS[n.theme] || 'var(--mist)';
+  const themeTag = n.theme ? `<span style="color:${themeClr}">${esc(n.theme)}</span>` : '';
+  tip.innerHTML=`<div class="t">${esc(n.title)}</div>`+
+    `<div class="m">${n.year&&n.year!==0?n.year:''}${themeTag?' · '+themeTag:''}</div>`+
+    (list?`<div class="nbrs">nearest in theme<br>${list}</div>`:'') +
+    `<div class="m" style="color:var(--accent);margin-top:5px;font-size:9px">↗ click to open</div>`;
+  tip.style.opacity=1;
+  const tw=tip.offsetWidth, th=tip.offsetHeight;
+  let px=x+16, py=y+16;
+  if(px+tw>W) px=x-tw-16; if(py+th>H) py=y-th-16;
+  tip.style.left=px+'px'; tip.style.top=py+'px';
+}
+function hideTip(){tip.style.opacity=0}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+
+// zoom
+stage.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const f = e.deltaY<0 ? 1.12 : 1/1.12;
+  const mx=e.clientX, my=e.clientY;
+  view.x = mx - (mx-view.x)*f;
+  view.y = my - (my-view.y)*f;
+  view.s *= f;
+  draw(); hideTip();
+},{passive:false});
+
+document.getElementById('zin').onclick=()=>zoomBtn(1.25);
+document.getElementById('zout').onclick=()=>zoomBtn(1/1.25);
+function zoomBtn(f){const mx=W/2,my=H/2;view.x=mx-(mx-view.x)*f;view.y=my-(my-view.y)*f;view.s*=f;draw()}
+document.getElementById('reset').onclick=()=>{fit();hover=null;draw()};
+
+// search
+const q=document.getElementById('q');
+q.addEventListener('input',()=>{
+  const v=q.value.trim().toLowerCase();
+  if(!v){hover=null;draw();return}
+  const hit=nodes.find(n=>String(n.title).toLowerCase().includes(v));
+  if(hit){
+    hover=hit;
+    // center on it
+    const tx=W/2 - hit.x*view.s;
+    const ty=H/2 - (1-hit.y)*view.s;
+    view.x=tx; view.y=ty;
+    draw();
+    const r=tip; showTip(hit,W/2,H/2);
+  }
+});
+</script>
+</body>
+</html>

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts"
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+} from "recharts"
 
 const IMG_W500 = "https://image.tmdb.org/t/p/w500"
 const IMG_W185 = "https://image.tmdb.org/t/p/w185"
@@ -21,9 +23,19 @@ export default function FilmProfile() {
 
   if (!data) return <p style={{ color: "#8A8779" }}>Loading…</p>
 
-  const { movie, genres, cast, crew, reviews, history } = data
+  const { movie, genres, cast, crew, reviews, history, imdbRatings = [], akas = [] } = data
   const yr = movie?.release_date?.slice(0, 4)
   const rev = Number(movie?.revenue || 0)
+
+  // Merge TMDB and IMDb rating time series into one chart dataset
+  const imdbByDate = {}
+  imdbRatings.forEach(r => { imdbByDate[r.snapshot_date] = r })
+
+  const ratingsHistory = imdbRatings.map(r => ({
+    date: r.snapshot_date,
+    imdb_rating: Number(r.averageRating),
+    imdb_votes: Number(r.numVotes),
+  }))
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -77,7 +89,7 @@ export default function FilmProfile() {
           {/* stats */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.2rem" }}>
             {[
-              { v: `${Number(movie?.vote_average || 0).toFixed(1)}`, l: "Rating" },
+              { v: `${Number(movie?.vote_average || 0).toFixed(1)}`, l: "TMDB Rating" },
               { v: Number(movie?.vote_count || 0).toLocaleString(), l: "Votes" },
               { v: rev > 0 ? `$${(rev / 1e6).toFixed(0)}M` : "—", l: "Revenue" },
               { v: `${movie?.runtime || "—"}m`, l: "Runtime" },
@@ -112,6 +124,30 @@ export default function FilmProfile() {
           )}
         </div>
       </div>
+
+      {/* also known as */}
+      {akas.length > 0 && (
+        <div style={{ marginBottom: "2.5rem" }}>
+          <Eyebrow text="Also known as" />
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.75rem"
+          }}>
+            {akas.map((a, i) => (
+              <div key={i} style={{
+                background: "#16161C", border: "1px solid #24242c",
+                borderRadius: 6, padding: "0.35rem 0.8rem", fontSize: "0.82rem",
+              }}>
+                <span style={{ color: "#EDE7DA" }}>{a.title}</span>
+                {a.region && (
+                  <span style={{ color: "#8A8779", marginLeft: "0.4rem", fontSize: "0.75rem" }}>
+                    {a.region}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* trailer */}
       {trailer && (
@@ -166,10 +202,10 @@ export default function FilmProfile() {
         </div>
       )}
 
-      {/* box office time series */}
+      {/* TMDB audience trends */}
       {history.length > 1 && (
         <div style={{ marginBottom: "2.5rem" }}>
-          <Eyebrow text="Metrics over time" />
+          <Eyebrow text="Audience trends (TMDB)" />
           <div style={{ display: "flex", gap: "0.5rem", margin: "0.75rem 0" }}>
             {["revenue", "popularity", "vote_count"].map(m => (
               <button key={m} onClick={() => setMetric(m)} style={{
@@ -182,10 +218,7 @@ export default function FilmProfile() {
               </button>
             ))}
           </div>
-          <div style={{
-            background: "#16161C", border: "1px solid #24242c",
-            borderRadius: 10, padding: "1rem"
-          }}>
+          <div style={{ background: "#16161C", border: "1px solid #24242c", borderRadius: 10, padding: "1rem" }}>
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={history}>
                 <XAxis dataKey="snapshot_ts" tick={{ fill: "#8A8779", fontSize: 11 }}
@@ -197,6 +230,39 @@ export default function FilmProfile() {
                 }} />
                 <Line type="monotone" dataKey={metric}
                   stroke="#E8B14C" strokeWidth={2} dot={{ fill: "#E8B14C" }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* IMDb ratings time series */}
+      {ratingsHistory.length > 1 && (
+        <div style={{ marginBottom: "2.5rem" }}>
+          <Eyebrow text="IMDb rating over time" />
+          <div style={{ background: "#16161C", border: "1px solid #24242c", borderRadius: 10, padding: "1rem", marginTop: "0.75rem" }}>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={ratingsHistory}>
+                <XAxis dataKey="date" tick={{ fill: "#8A8779", fontSize: 11 }}
+                  axisLine={false} tickLine={false} />
+                <YAxis
+                  yAxisId="rating" domain={[0, 10]}
+                  tick={{ fill: "#8A8779", fontSize: 11 }} axisLine={false} tickLine={false}
+                />
+                <YAxis
+                  yAxisId="votes" orientation="right"
+                  tick={{ fill: "#8A8779", fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+                />
+                <Tooltip contentStyle={{
+                  background: "#16161C", border: "1px solid #24242c",
+                  borderRadius: 8, color: "#EDE7DA"
+                }} />
+                <Legend wrapperStyle={{ color: "#8A8779", fontSize: "0.8rem" }} />
+                <Line yAxisId="rating" type="monotone" dataKey="imdb_rating"
+                  name="IMDb Rating" stroke="#E8B14C" strokeWidth={2} dot={{ fill: "#E8B14C" }} />
+                <Line yAxisId="votes" type="monotone" dataKey="imdb_votes"
+                  name="IMDb Votes" stroke="#4a7c9e" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
