@@ -22,22 +22,35 @@ from collections import Counter
 # MAGIC %md ## 1 · Director–film pairs
 
 # COMMAND ----------
-directors_raw = spark.sql("""
+crew_raw = spark.sql("""
     SELECT
         fc.person_id,
         fc.name,
         fc.film_id,
+        CASE
+            WHEN lower(fc.job) = 'director'                  THEN 'Director'
+            WHEN lower(fc.job) IN ('director of photography',
+                                   'cinematographer')         THEN 'Cinematographer'
+        END AS role,
         m.vote_average,
         m.vote_count,
         m.title
     FROM milkmoo.silver.film_crew fc
     JOIN milkmoo.silver.movies m ON fc.film_id = m.id
-    WHERE lower(fc.job) = 'director'
-      AND m.vote_count >= 100
-      AND fc.name IS NOT NULL
+    WHERE (
+        lower(fc.job) = 'director'
+        OR lower(fc.job) IN ('director of photography', 'cinematographer')
+    )
+    AND m.vote_count >= 100
+    AND fc.name IS NOT NULL
 """).toPandas()
 
-print(f"Rows: {len(directors_raw):,}  |  Directors: {directors_raw.person_id.nunique():,}")
+# Alias so the rest of the notebook keeps working
+directors_raw = crew_raw
+
+dirs = crew_raw[crew_raw.role=='Director'].person_id.nunique()
+dops = crew_raw[crew_raw.role=='Cinematographer'].person_id.nunique()
+print(f"Rows: {len(crew_raw):,}  |  Directors: {dirs:,}  |  Cinematographers: {dops:,}")
 
 # COMMAND ----------
 # MAGIC %md ## 2 · Film embeddings
@@ -89,46 +102,52 @@ except Exception as e:
 # MAGIC %md ## 3 · Director style vectors
 
 # COMMAND ----------
-director_data = {}
+person_data = {}
 for _, row in directors_raw.iterrows():
     pid = int(row['person_id'])
     fid = int(row['film_id'])
     if fid not in emb_map:
         continue
-    if pid not in director_data:
-        director_data[pid] = {
+    if pid not in person_data:
+        person_data[pid] = {
             'name':      row['name'],
+            'role':      row['role'],
             'films':     [],
             'vec_sum':   np.zeros_like(next(iter(emb_map.values()))),
             'vec_count': 0,
         }
-    director_data[pid]['vec_sum']   += emb_map[fid]
-    director_data[pid]['vec_count'] += 1
-    director_data[pid]['films'].append({
+    person_data[pid]['vec_sum']   += emb_map[fid]
+    person_data[pid]['vec_count'] += 1
+    person_data[pid]['films'].append({
         'film_id':      fid,
         'title':        row['title'],
         'vote_average': float(row['vote_average']),
         'vote_count':   int(row['vote_count']),
     })
 
-MIN_FILMS = 3   # require at least this many embedded films per director
+# Directors need ≥3 films (more prolific); cinematographers ≥2 (often shoot fewer)
+def min_films(role): return 3 if role == 'Director' else 2
+
 director_list = []
-for pid, d in director_data.items():
-    if d['vec_count'] < MIN_FILMS:
+for pid, d in person_data.items():
+    if d['vec_count'] < min_films(d['role']):
         continue
     vec = d['vec_sum'] / d['vec_count']
-    vec = vec / (np.linalg.norm(vec) + 1e-9)   # L2-normalise
+    vec = vec / (np.linalg.norm(vec) + 1e-9)
     d['films'].sort(key=lambda f: -f['vote_average'])
     director_list.append({
-        'person_id':     pid,
-        'name':          d['name'],
-        'film_count':    d['vec_count'],
-        'vec':           vec,
-        'top_film_id':   d['films'][0]['film_id']   if d['films'] else None,
-        'top_film_title':d['films'][0]['title']     if d['films'] else '',
+        'person_id':      pid,
+        'name':           d['name'],
+        'role':           d['role'],
+        'film_count':     d['vec_count'],
+        'vec':            vec,
+        'top_film_id':    d['films'][0]['film_id']  if d['films'] else None,
+        'top_film_title': d['films'][0]['title']    if d['films'] else '',
     })
 
-print(f"Directors with ≥{MIN_FILMS} embedded films: {len(director_list):,}")
+dirs = sum(1 for d in director_list if d['role']=='Director')
+dops = sum(1 for d in director_list if d['role']=='Cinematographer')
+print(f"Directors: {dirs:,}  |  Cinematographers: {dops:,}  |  Total: {len(director_list):,}")
 
 # COMMAND ----------
 # MAGIC %md ## 4 · UMAP → 2D positions
@@ -289,6 +308,7 @@ for c in range(K):
 output_nodes = [{
     'person_id':      d['person_id'],
     'name':           d['name'],
+    'role':           d['role'],
     'film_count':     d['film_count'],
     'x':              round(d['x'], 5),
     'y':              round(d['y'], 5),
