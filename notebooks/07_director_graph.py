@@ -202,12 +202,27 @@ output_nodes = [{
     'top_film_title': d['top_film_title'],
 } for d in director_list]
 
+import base64
+
 json_str = json.dumps({'nodes': output_nodes}, ensure_ascii=False)
 
-# Write to DBFS
-out_path = '/FileStore/cinema_atlas/director_graph.json'
-dbutils.fs.put(out_path, json_str, overwrite=True)
-print(f"Wrote {len(output_nodes):,} director nodes → dbfs:{out_path}")
-print(f"\nDownload URL (replace <workspace>):")
-print(f"  https://<workspace>.azuredatabricks.net/files/cinema_atlas/director_graph.json")
-print(f"\nThen copy to:  cinema_atlas_next/public/director_graph.json")
+# Write to driver local filesystem (DBFS root disabled on Unity Catalog workspaces)
+with open('/tmp/director_graph.json', 'w') as f:
+    f.write(json_str)
+
+print(f"Exported {len(output_nodes):,} nodes  ({len(json_str)//1024} KB)")
+
+# Render a one-click download link in the notebook output
+b64 = base64.b64encode(json_str.encode()).decode()
+displayHTML(f'''
+<a download="director_graph.json"
+   href="data:application/json;base64,{b64}"
+   style="display:inline-block;margin-top:12px;padding:10px 20px;
+          background:#1a73e8;color:white;border-radius:6px;
+          font-family:sans-serif;font-size:14px;text-decoration:none">
+  &#8675; Download director_graph.json
+</a>
+<p style="font-family:sans-serif;font-size:12px;color:#666;margin-top:8px">
+  After downloading, copy to: cinema_atlas_next/public/director_graph.json
+</p>
+''')
