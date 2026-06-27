@@ -32,6 +32,7 @@ export default function RootLayout({ children }) {
           <a href="/search" style={{ color: "#8A8779", textDecoration: "none", fontSize: "0.9rem" }}>Films</a>
           <a href="/graph" style={{ color: "#8A8779", textDecoration: "none", fontSize: "0.9rem" }}>Graph</a>
           <a href="/thematic-map" style={{ color: "#8A8779", textDecoration: "none", fontSize: "0.9rem" }}>Thematic Map</a>
+          <a href="/director-map" style={{ color: "#8A8779", textDecoration: "none", fontSize: "0.9rem" }}>Director Map</a>
         </nav>
         <main style={{ padding: "2rem" }}>
           {children}

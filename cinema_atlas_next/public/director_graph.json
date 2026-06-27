@@ -1,0 +1,169 @@
+{
+  "nodes": [
+    {
+      "person_id": 138,
+      "name": "Stanley Kubrick",
+      "film_count": 9,
+      "x": 0.1414,
+      "y": 0.7396,
+      "cluster": 0,
+      "cluster_label": "New Hollywood",
+      "top_film_id": 4935,
+      "top_film_title": "2001: A Space Odyssey"
+    },
+    {
+      "person_id": 2032,
+      "name": "Andrei Tarkovsky",
+      "film_count": 7,
+      "x": 0.4133,
+      "y": 0.9221,
+      "cluster": 1,
+      "cluster_label": "European Arthouse",
+      "top_film_id": 10576,
+      "top_film_title": "Stalker"
+    },
+    {
+      "person_id": 4762,
+      "name": "Martin Scorsese",
+      "film_count": 23,
+      "x": 0.1423,
+      "y": 0.6602,
+      "cluster": 0,
+      "cluster_label": "New Hollywood",
+      "top_film_id": 769,
+      "top_film_title": "Goodfellas"
+    },
+    {
+      "person_id": 6765,
+      "name": "Ingmar Bergman",
+      "film_count": 12,
+      "x": 0.4399,
+      "y": 0.864,
+      "cluster": 1,
+      "cluster_label": "European Arthouse",
+      "top_film_id": 1146,
+      "top_film_title": "The Seventh Seal"
+    },
+    {
+      "person_id": 3141,
+      "name": "Francis Ford Coppola",
+      "film_count": 10,
+      "x": 0.137,
+      "y": 0.757,
+      "cluster": 0,
+      "cluster_label": "New Hollywood",
+      "top_film_id": 238,
+      "top_film_title": "The Godfather"
+    },
+    {
+      "person_id": 6765,
+      "name": "Federico Fellini",
+      "film_count": 11,
+      "x": 0.4339,
+      "y": 0.9498,
+      "cluster": 1,
+      "cluster_label": "European Arthouse",
+      "top_film_id": 11753,
+      "top_film_title": "La Dolce Vita"
+    },
+    {
+      "person_id": 4888,
+      "name": "Steven Spielberg",
+      "film_count": 32,
+      "x": 0.7194,
+      "y": 0.3566,
+      "cluster": 2,
+      "cluster_label": "Mainstream American",
+      "top_film_id": 694,
+      "top_film_title": "Schindler's List"
+    },
+    {
+      "person_id": 11090,
+      "name": "Akira Kurosawa",
+      "film_count": 15,
+      "x": 0.2057,
+      "y": 0.1591,
+      "cluster": 3,
+      "cluster_label": "Asian Cinema",
+      "top_film_id": 11878,
+      "top_film_title": "Seven Samurai"
+    },
+    {
+      "person_id": 9355,
+      "name": "James Cameron",
+      "film_count": 12,
+      "x": 0.8348,
+      "y": 0.7287,
+      "cluster": 4,
+      "cluster_label": "Genre & Blockbuster",
+      "top_film_id": 19995,
+      "top_film_title": "Avatar"
+    },
+    {
+      "person_id": 10467,
+      "name": "Wong Kar-wai",
+      "film_count": 9,
+      "x": 0.2525,
+      "y": 0.2136,
+      "cluster": 3,
+      "cluster_label": "Asian Cinema",
+      "top_film_id": 10541,
+      "top_film_title": "In the Mood for Love"
+    },
+    {
+      "person_id": 6710,
+      "name": "Christopher Nolan",
+      "film_count": 12,
+      "x": 0.8519,
+      "y": 0.5628,
+      "cluster": 4,
+      "cluster_label": "Genre & Blockbuster",
+      "top_film_id": 155,
+      "top_film_title": "The Dark Knight"
+    },
+    {
+      "person_id": 5427,
+      "name": "Jean-Luc Godard",
+      "film_count": 40,
+      "x": 0.4013,
+      "y": 0.9094,
+      "cluster": 1,
+      "cluster_label": "European Arthouse",
+      "top_film_id": 10219,
+      "top_film_title": "Breathless"
+    },
+    {
+      "person_id": 6528,
+      "name": "Park Chan-wook",
+      "film_count": 10,
+      "x": 0.3024,
+      "y": 0.2056,
+      "cluster": 3,
+      "cluster_label": "Asian Cinema",
+      "top_film_id": 4146,
+      "top_film_title": "Oldboy"
+    },
+    {
+      "person_id": 6710,
+      "name": "Ridley Scott",
+      "film_count": 28,
+      "x": 0.8426,
+      "y": 0.6649,
+      "cluster": 4,
+      "cluster_label": "Genre & Blockbuster",
+      "top_film_id": 78,
+      "top_film_title": "Blade Runner"
+    },
+    {
+      "person_id": 3142,
+      "name": "Robert Altman",
+      "film_count": 28,
+      "x": 0.1969,
+      "y": 0.6832,
+      "cluster": 0,
+      "cluster_label": "New Hollywood",
+      "top_film_id": 11370,
+      "top_film_title": "Nashville"
+    }
+  ]
+}
