@@ -6,7 +6,7 @@ export async function GET(request) {
 
   const rows = await queryDatabricks(`
     SELECT film_id, title, release_date, vote_average, vote_count, poster_path
-    FROM milkmoo.silver.movies
+    FROM workspace.silver.movies
     WHERE LOWER(title) LIKE LOWER('%${term}%')
     ORDER BY vote_count DESC
     LIMIT 24

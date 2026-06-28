@@ -47,6 +47,9 @@ Next.js web app (cinema_atlas_next)
  
 ### Unified Silver (all sources)
 ![Unified Silver ER](docs/images/unified_silver.png)
+
+### Gold Analytics
+![Unified Silver ER](docs/images/gold_analytics.png)
  
 ---
  
