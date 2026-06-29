@@ -71,7 +71,7 @@
   .chip.faded{opacity:.18}
   #stage{cursor:default}
   #stage.drag{cursor:grabbing}
-  #stage.hovering{cursor:pointer}
+  #stage.hovering{cursor:crosshair}
 </style>
 </head>
 <body>
@@ -397,7 +397,6 @@ draw();
 let drag=false, last=null, moved=false;
 stage.addEventListener('mousedown',e=>{drag=true;moved=false;last=[e.clientX,e.clientY];stage.classList.add('drag')});
 window.addEventListener('mouseup', () => {
-  if(!moved && hover) window.parent.location.href = '/film/' + hover.film_id;
   drag = false; stage.classList.remove('drag');
 });
 window.addEventListener('mousemove',e=>{
@@ -425,8 +424,7 @@ function showTip(n,x,y){
   const themeTag = n.theme ? `<span style="color:${themeClr}">${esc(n.theme)}</span>` : '';
   tip.innerHTML=`<div class="t">${esc(n.title)}</div>`+
     `<div class="m">${n.year&&n.year!==0?n.year:''}${themeTag?' · '+themeTag:''}</div>`+
-    (list?`<div class="nbrs">nearest in theme<br>${list}</div>`:'') +
-    `<div class="m" style="color:var(--accent);margin-top:5px;font-size:9px">↗ click to open</div>`;
+    (list?`<div class="nbrs">nearest in theme<br>${list}</div>`:'');
   tip.style.opacity=1;
   const tw=tip.offsetWidth, th=tip.offsetHeight;
   let px=x+16, py=y+16;
