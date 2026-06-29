@@ -268,13 +268,17 @@ document.getElementById('nc').textContent = nodes.length.toLocaleString();
 document.getElementById('ec').textContent = edges.length.toLocaleString();
 
 // build adjacency for hover-highlight + neighbor list
+// use inner Maps to deduplicate (edges JSON stores both directions)
 const adj = new Map();
 for(const e of edges){
-  if(!adj.has(e.src)) adj.set(e.src,[]);
-  if(!adj.has(e.dst)) adj.set(e.dst,[]);
-  adj.get(e.src).push([e.dst,e.sim]);
-  adj.get(e.dst).push([e.src,e.sim]);
+  if(!adj.has(e.src)) adj.set(e.src, new Map());
+  if(!adj.has(e.dst)) adj.set(e.dst, new Map());
+  const sm = adj.get(e.src), dm = adj.get(e.dst);
+  if(!sm.has(e.dst) || sm.get(e.dst) < e.sim) sm.set(e.dst, e.sim);
+  if(!dm.has(e.src) || dm.get(e.src) < e.sim) dm.set(e.src, e.sim);
 }
+// flatten to [[id, sim], …] sorted desc
+for(const [id, m] of adj) adj.set(id, [...m].sort((a,b)=>b[1]-a[1]));
 
 // view transform
 let view = {x:0,y:0,s:0};
