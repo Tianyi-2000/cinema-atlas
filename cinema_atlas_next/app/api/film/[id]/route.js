@@ -3,8 +3,13 @@ import { queryDatabricks } from "@/lib/databricks"
 export async function GET(request, { params }) {
   const { id } = await params
 
-  const [movie, genres, cast, crew, reviews, history] = await Promise.all([
-    queryDatabricks(`SELECT * FROM workspace.silver.movies WHERE film_id = ${id}`),
+  const [movie, genres, cast, crew, reviews, history, imdbRatings, akas] = await Promise.all([
+    queryDatabricks(`
+      SELECT m.*, sf.tconst
+      FROM milkmoo.silver.movies m
+      LEFT JOIN workspace.silver.films sf ON m.film_id = sf.id
+      WHERE m.film_id = ${id}
+    `),
     queryDatabricks(`
       SELECT g.genre_name FROM workspace.silver.film_genres fg
       JOIN workspace.silver.genres g ON fg.genre_id = g.genre_id
@@ -38,6 +43,22 @@ export async function GET(request, { params }) {
       WHERE film_id = ${id}
       ORDER BY snapshot_ts
     `),
+    queryDatabricks(`
+      SELECT ir.snapshot_date, ir.averageRating, ir.numVotes
+      FROM workspace.bronze.imdb_ratings_validated ir
+      JOIN workspace.silver.matched_tconsts mt ON ir.tconst = mt.tconst
+      WHERE mt.film_id = ${id}
+      ORDER BY ir.snapshot_date
+    `),
+    queryDatabricks(`
+      SELECT ia.title, ia.region, ia.language, ia.isOriginalLanguage
+      FROM workspace.bronze.imdb_akas_validated ia
+      JOIN workspace.silver.films sf ON ia.titleId = sf.tconst
+      WHERE sf.id = ${id}
+        AND ia.region IS NOT NULL
+      ORDER BY CASE WHEN ia.isOriginalLanguage = 'true' THEN 0 ELSE 1 END, ia.ordering
+      LIMIT 8
+    `),
   ])
 
   return Response.json({
@@ -47,5 +68,7 @@ export async function GET(request, { params }) {
     crew,
     reviews,
     history,
+    imdbRatings,
+    akas,
   })
 }
