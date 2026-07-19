@@ -218,8 +218,8 @@ export default function Analytics() {
       <Eyebrow text="Films released per year" />
       <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "1rem", marginBottom: "2.5rem" }}>
         <ResponsiveContainer width="100%" height={240}>
-          <LineChart data={d.yearlyTrends}>
-            <XAxis dataKey="year" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
+          <LineChart data={d.yearlyTrends} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <XAxis dataKey="year" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
             <YAxis tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
             <Tooltip {...tooltipStyle} />
             <Line type="monotone" dataKey="film_count" stroke={AMBER} strokeWidth={2} dot={false} name="Films" />
@@ -230,8 +230,8 @@ export default function Analytics() {
       <Eyebrow text="Average combined rating per year" />
       <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "1rem", marginBottom: "2.5rem" }}>
         <ResponsiveContainer width="100%" height={240}>
-          <LineChart data={d.yearlyTrends}>
-            <XAxis dataKey="year" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
+          <LineChart data={d.yearlyTrends} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <XAxis dataKey="year" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
             <YAxis domain={[5, 9]} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
             <Tooltip {...tooltipStyle} />
             <Line type="monotone" dataKey="avg_combined_rating" stroke={CREAM} strokeWidth={2} dot={false} name="Avg Rating" />

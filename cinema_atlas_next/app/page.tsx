@@ -108,13 +108,17 @@ export default function Home() {
                   <stop offset="95%" stopColor="#E8B14C" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis
-                dataKey="year"
-                stroke="#8A8779"
-                tick={{ fill: "#8A8779", fontSize: 12 }}
-                axisLine={false}
-                tickLine={false}
-              />
+            <XAxis
+              dataKey="year"
+              stroke="#8A8779"
+              tick={{ fill: "#8A8779", fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              interval={0}
+              angle={-45}
+              textAnchor="end"
+              height={50}
+            />
               <YAxis
                 stroke="#8A8779"
                 tick={{ fill: "#8A8779", fontSize: 12 }}

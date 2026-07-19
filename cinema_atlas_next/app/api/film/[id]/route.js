@@ -7,40 +7,24 @@ export async function GET(request, { params }) {
     const results = await Promise.allSettled([
       queryDatabricks(`
         SELECT m.*, sf.tconst
-        FROM milkmoo.silver.movies m
+        FROM workspace.silver_cinema_atlas.tmdb_films m
         LEFT JOIN workspace.silver.films sf ON m.film_id = sf.id
         WHERE m.film_id = ${id}
       `),
       queryDatabricks(`
-        SELECT g.genre_name FROM workspace.silver.film_genres fg
-        JOIN workspace.silver.genres g ON fg.genre_id = g.genre_id
-        WHERE fg.film_id = ${id}
-      `),
-      queryDatabricks(`
-        SELECT c.cast_order, c.character, p.person_id, p.name, p.profile_path
-        FROM workspace.silver.film_cast c
-        JOIN workspace.silver.people p ON c.person_id = p.person_id
-        WHERE c.film_id = ${id}
-        ORDER BY c.cast_order LIMIT 12
-      `),
-      queryDatabricks(`
-        SELECT c.job, p.name
-        FROM workspace.silver.film_crew c
-        JOIN workspace.silver.people p ON c.person_id = p.person_id
-        WHERE c.film_id = ${id}
-          AND c.job IN ('Director','Screenplay','Writer',
-                        'Director of Photography','Original Music Composer','Producer')
-        ORDER BY CASE c.job WHEN 'Director' THEN 1 WHEN 'Screenplay' THEN 2 ELSE 3 END
+        SELECT credit_type, cast_order, character, job, person_id, person_name AS name, profile_path
+        FROM workspace.silver_cinema_atlas.tmdb_credits
+        WHERE film_id = ${id}
       `),
       queryDatabricks(`
         SELECT author, author_rating, content, created_at
-        FROM workspace.silver.film_reviews
+        FROM workspace.silver_cinema_atlas.tmdb_reviews
         WHERE film_id = ${id}
         ORDER BY created_at DESC LIMIT 5
       `),
       queryDatabricks(`
         SELECT snapshot_ts, revenue, popularity, vote_count
-        FROM workspace.silver.audience_trends
+        FROM workspace.silver_cinema_atlas.tmdb_audience_trends
         WHERE film_id = ${id}
         ORDER BY snapshot_ts
       `),
@@ -64,15 +48,30 @@ export async function GET(request, { params }) {
 
     const val = (i) => results[i].status === 'fulfilled' ? results[i].value : []
 
+    const movie = val(0)[0] ?? null
+    const genres = movie?.genres
+      ? movie.genres.split('|').filter(Boolean).map(genre_name => ({ genre_name }))
+      : []
+
+    const credits = val(1)
+    const cast = credits
+      .filter(c => c.credit_type === 'cast')
+      .sort((a, b) => a.cast_order - b.cast_order)
+      .slice(0, 12)
+    const crewOrder = ['Director', 'Screenplay', 'Writer', 'Director of Photography', 'Original Music Composer', 'Producer']
+    const crew = credits
+      .filter(c => c.credit_type === 'crew' && crewOrder.includes(c.job))
+      .sort((a, b) => crewOrder.indexOf(a.job) - crewOrder.indexOf(b.job))
+
     return Response.json({
-      movie:       val(0)[0] ?? null,
-      genres:      val(1),
-      cast:        val(2),
-      crew:        val(3),
-      reviews:     val(4),
-      history:     val(5),
-      imdbRatings: val(6),
-      akas:        val(7),
+      movie,
+      genres,
+      cast,
+      crew,
+      reviews:     val(2),
+      history:     val(3),
+      imdbRatings: val(4),
+      akas:        val(5),
     })
   } catch (err) {
     console.error('film API error:', err)

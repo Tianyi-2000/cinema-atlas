@@ -19,7 +19,7 @@ export async function GET() {
              g.revenue, g.rank_combined_rating,
              m.poster_path
       FROM workspace.gold.gold_film_leaderboard g
-      LEFT JOIN workspace.silver.movies m ON g.film_id = m.film_id
+      LEFT JOIN workspace.silver_cinema_atlas.tmdb_films m ON g.film_id = m.film_id
       WHERE g.imdb_votes >= 500
       ORDER BY g.rank_combined_rating
       LIMIT 24
@@ -31,7 +31,7 @@ export async function GET() {
              g.rank_revenue,
              m.poster_path
       FROM workspace.gold.gold_film_leaderboard g
-      LEFT JOIN workspace.silver.movies m ON g.film_id = m.film_id
+      LEFT JOIN workspace.silver_cinema_atlas.tmdb_films m ON g.film_id = m.film_id
       WHERE g.revenue > 0
       ORDER BY g.rank_revenue
       LIMIT 24
@@ -43,7 +43,7 @@ export async function GET() {
              g.rank_popularity,
              m.poster_path
       FROM workspace.gold.gold_film_leaderboard g
-      LEFT JOIN workspace.silver.movies m ON g.film_id = m.film_id
+      LEFT JOIN workspace.silver_cinema_atlas.tmdb_films m ON g.film_id = m.film_id
       ORDER BY g.rank_popularity
       LIMIT 24
     `),
@@ -71,12 +71,23 @@ export async function GET() {
 
     // ── Yearly trends (Gold) ────────────────────────────────────────────────
     queryDatabricks(`
-      SELECT year, film_count, avg_combined_rating,
-             avg_imdb_rating, avg_tmdb_rating,
-             total_revenue, avg_revenue, avg_popularity
-      FROM workspace.gold.gold_yearly_summary
-      WHERE year >= 2000 AND year <= 2025
-      ORDER BY year
+      SELECT
+          YEAR(f.release_date) AS year,
+          COUNT(*) AS film_count,
+          ROUND(AVG((f.vote_average + ir.averageRating) / 2), 2) AS avg_combined_rating,
+          ROUND(AVG(ir.averageRating), 2) AS avg_imdb_rating,
+          ROUND(AVG(f.vote_average), 2) AS avg_tmdb_rating,
+          SUM(f.revenue) AS total_revenue,
+          ROUND(AVG(f.revenue), 2) AS avg_revenue,
+          ROUND(AVG(f.popularity), 2) AS avg_popularity
+        FROM workspace.silver_cinema_atlas.tmdb_films f
+        LEFT JOIN workspace.silver.matched_tconsts mt ON f.film_id = mt.film_id
+        LEFT JOIN workspace.bronze.imdb_ratings_validated ir ON mt.tconst = ir.tconst
+        WHERE f.release_date IS NOT NULL
+          AND f.vote_count >= 200
+          AND YEAR(f.release_date) >= 2000
+        GROUP BY YEAR(f.release_date)
+        ORDER BY year
     `),
 
     // ── People leaderboards (Gold) ──────────────────────────────────────────

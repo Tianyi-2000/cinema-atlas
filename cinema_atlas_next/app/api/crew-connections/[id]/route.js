@@ -5,11 +5,11 @@ export async function GET(request, { params }) {
 
   const rows = await queryDatabricks(`
     WITH center_crew AS (
-      SELECT c.person_id, p.name, c.job, p.profile_path
-      FROM milkmoo.silver.film_crew c
-      JOIN milkmoo.silver.people p ON c.person_id = p.person_id
-      WHERE c.film_id = ${id}
-        AND c.job IN (
+      SELECT person_id, person_name AS name, job, profile_path
+      FROM workspace.silver_cinema_atlas.tmdb_credits
+      WHERE film_id = ${id}
+        AND credit_type = 'crew'
+        AND job IN (
           'Director', 'Director of Photography',
           'Original Music Composer', 'Editor'
         )
@@ -24,8 +24,9 @@ export async function GET(request, { params }) {
       m.release_date,
       m.vote_average
     FROM center_crew cc
-    JOIN milkmoo.silver.film_crew c2 ON cc.person_id = c2.person_id
-    JOIN milkmoo.silver.movies m     ON c2.film_id   = m.film_id
+    JOIN workspace.silver_cinema_atlas.tmdb_credits c2
+      ON cc.person_id = c2.person_id AND c2.credit_type = 'crew'
+    JOIN workspace.silver_cinema_atlas.tmdb_films m ON c2.film_id = m.film_id
     JOIN workspace.silver.matched_tconsts mt ON m.imdb_id = mt.tconst
     WHERE c2.film_id != ${id}
       AND m.vote_count >= 200

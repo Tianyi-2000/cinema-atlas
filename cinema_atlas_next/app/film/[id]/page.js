@@ -13,12 +13,18 @@ export default function FilmProfile() {
   const { id } = useParams()
   const [data, setData] = useState(null)
   const [trailer, setTrailer] = useState(null)
+  const [showtimes, setShowtimes] = useState([])
+  const [showtimeDate, setShowtimeDate] = useState(null)
   const [metric, setMetric] = useState("revenue")
 
   useEffect(() => {
     if (!id) return
     fetch(`/api/film/${id}`).then(r => r.json()).then(setData)
     fetch(`/api/trailer/${id}`).then(r => r.json()).then(d => setTrailer(d.key))
+    fetch(`/api/showtimes/${id}`).then(r => r.json()).then(d => {
+      setShowtimes(Array.isArray(d.showtimes) ? d.showtimes : [])
+      setShowtimeDate(d.date)
+    })
   }, [id])
 
   if (!data) return <p style={{ color: "#8A8779" }}>Loading…</p>
@@ -27,15 +33,20 @@ export default function FilmProfile() {
   const yr = movie?.release_date?.slice(0, 4)
   const rev = Number(movie?.revenue || 0)
 
-  // Merge TMDB and IMDb rating time series into one chart dataset
-  const imdbByDate = {}
-  imdbRatings.forEach(r => { imdbByDate[r.snapshot_date] = r })
-
   const ratingsHistory = imdbRatings.map(r => ({
     date: r.snapshot_date,
     imdb_rating: Number(r.averageRating),
     imdb_votes: Number(r.numVotes),
   }))
+
+  // group showtimes by cinema
+  const showtimesByCinema = {}
+  for (const s of showtimes) {
+    if (!showtimesByCinema[s.cinema_name]) {
+      showtimesByCinema[s.cinema_name] = { distance: s.distance, times: [] }
+    }
+    showtimesByCinema[s.cinema_name].times.push(s)
+  }
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -124,6 +135,46 @@ export default function FilmProfile() {
           )}
         </div>
       </div>
+
+        {/* showtimes */}
+        {Object.keys(showtimesByCinema).length > 0 && (
+          <div style={{ marginBottom: "2.5rem" }}>
+            <Eyebrow text="Showtimes near San Francisco" />
+            <div style={{ color: "#8A8779", fontSize: "0.82rem", margin: "0.5rem 0 0.75rem" }}>
+              {showtimeDate && new Date(showtimeDate + "T00:00:00").toLocaleDateString("en-US", {
+                weekday: "long", month: "long", day: "numeric"
+              })} · all times PST
+            </div>
+            <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {Object.entries(showtimesByCinema)
+                .sort((a, b) => a[1].distance - b[1].distance)
+                .map(([cinema, info]) => (
+                  <div key={cinema} style={{
+                    background: "#16161C", border: "1px solid #24242c",
+                    borderRadius: 8, padding: "0.8rem 1rem"
+                  }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                    <span style={{ color: "#EDE7DA", fontWeight: 600, fontSize: "0.9rem" }}>{cinema}</span>
+                    <span style={{ color: "#8A8779", fontSize: "0.78rem" }}>{Number(info.distance).toFixed(1)} mi</span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                    {info.times
+                      .sort((a, b) => a.start_time.localeCompare(b.start_time))
+                      .map((t, i) => (
+                        <span key={i} style={{
+                          background: "#23231b", color: "#E8B14C",
+                          border: "1px solid #3a3526", borderRadius: 6,
+                          padding: "0.25rem 0.6rem", fontSize: "0.8rem"
+                        }}>
+                          {t.start_time}{t.version_type !== "Standard" ? ` · ${t.version_type}` : ""}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* also known as */}
       {akas.length > 0 && (
